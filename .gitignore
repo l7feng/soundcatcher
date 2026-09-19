@@ -1,0 +1,32 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# 运行时产物
+data/
+data-test/
+*.db
+*.db-wal
+*.db-shm
+*.faiss
+
+# 模型文件（≈1GB，不随仓分发）
+#
+# 自 2026-09-19 起 models/ 已移出本仓，位于工程层：
+#   D:\Ai-Files\App-Project\Sound-library\models\
+# 落点由 soundcatcher.config 解析（SOUNDCATCHER_MODELS > 工程层 > 仓内）。
+# 获取方式：python scripts/download_models.py
+models/
+**/models/*.onnx
+*.onnx
+*.npy
+
+# 一次性调试产物
+_probe_*.json
+_probe_*.txt
+*.orig.bak
+*.pre-*

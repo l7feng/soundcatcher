@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "soundcatcher"
+version = "0.1.0"
+description = "本地优先、无付费墙的 AI 音效库管理工具（语义搜索 / 以声搜声 / UCS 分类）"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "onnxruntime>=1.18",
+    "faiss-cpu>=1.8",
+    "av>=13.0",
+    "numpy>=1.26",
+    "tokenizers>=0.19",
+    "typer>=0.12",
+    "rich>=13.0",
+]
+
+[project.scripts]
+soundcatcher = "soundcatcher.cli:app"
+soundcatcher-gui = "soundcatcher.gui.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
