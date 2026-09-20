@@ -53,6 +53,7 @@ from ..embedder import ClapEmbedder
 from ..indexer import VectorIndex
 from ..search import SearchResult, Searcher
 from ..translator import OpusTranslator
+from .settings import PATH_KEYS, Settings, settings_path
 from .userdata import UserDataStore, default_state_path
 
 logger = logging.getLogger(__name__)
@@ -80,14 +81,19 @@ def _connect_readonly(db_path: Path) -> sqlite3.Connection:
 
 def _data_home() -> Path:
     """数据目录：默认 ``Config.data_dir``，可用 ``SOUNDCATCHER_DATA_HOME`` 覆盖。"""
-    env = os.environ.get("SOUNDCATCHER_DATA_HOME")
-    if env:
-        return Path(env).expanduser().resolve()
     return Config.default().data_dir
 
 
+def _catalog_dir() -> Path:
+    """UCS 静态语料目录（753 类字典）：默认 ``Config.catalog_dir``。
+
+    注意：与 ``data/ucs/``（派生原型矩阵）**不是一回事** —— 这里是只读「原料」。
+    """
+    return Config.default().catalog_dir
+
+
 def _export_dir() -> Path:
-    """收藏夹导出默认目录：Downloads（家机/公司机通用），可用环境变量覆盖。"""
+    """收藏夹导出默认目录：``SOUNDCATCHER_EXPORT_DIR`` > Downloads > home。"""
     env = os.environ.get("SOUNDCATCHER_EXPORT_DIR")
     if env:
         return Path(env).expanduser().resolve()
@@ -458,6 +464,8 @@ class LibraryWorker(QObject):
         self.db_path = Path(data_home) / "library.db"
         self.index_path = Path(data_home) / "index" / "vectors.faiss"
         self.ucs_dir = Path(data_home) / "ucs"
+        # UCS 静态语料（753 类字典）在 catalog/，与 data/ucs/ 的派生矩阵是两回事
+        self.catalog_dir = _catalog_dir()
         self.conn: sqlite3.Connection | None = None
         self.index: VectorIndex | None = None
         self.embedder: ClapEmbedder | None = None
@@ -550,7 +558,12 @@ class LibraryWorker(QObject):
 
     @Slot()
     def loadUcsTree(self) -> None:
-        """读 ``ucs/catalog.json`` + 计数 → 构树 → 发根节点列表（UI 线程组模型）。"""
+        """读 ``data/ucs/catalog.json`` + 计数 → 构树 → 发根节点列表（UI 线程组模型）。
+
+        注意：读的是 **``data/ucs/catalog.json``（派生元数据）**，不是
+        ``catalog/``（静态 CSV/TSV 原料）。两者同名但不同物 ——
+        ``catalog/`` 供 ``ucs init`` 生成原型矩阵用，GUI 不直接读它。
+        """
         if self.conn is None:
             self.ucsTreeReady.emit([])
             return
@@ -643,6 +656,8 @@ class AppBackend(QObject):
     favoritesChanged = Signal()
     savedSearchesChanged = Signal()
     scanStateChanged = Signal()
+    settingsChanged = Signal()          # 主题 / 语言 / 侧栏宽度 / 路径偏好变化
+    restartRequired = Signal(str)       # 路径迁移完成，需重启（携带提示文案）
 
     # 内部请求信号：跨线程排队到模型线程（直接调用方法不会排队，会跑在 UI 线程）
     _searchReq = Signal(str, str, int)
@@ -662,6 +677,8 @@ class AppBackend(QObject):
         self._current_waveform: list[float] | None = None
         self._ucs_model = UcsTreeModel([])
         self._user = UserDataStore(default_state_path())
+        # 应用偏好（主题 / 语言 / 侧栏宽度 / 路径偏好）
+        self._settings = Settings(settings_path())
 
         # 写路径（人工改标）：短连接 + 只读会话不动
         self._db_path = Path(data_home) / "library.db"
@@ -729,6 +746,192 @@ class AppBackend(QObject):
     @property
     def searching(self) -> bool:
         return self._searching
+
+    # -- 应用偏好（主题 / 语言 / 侧栏宽度 / 路径）---------------------------
+
+    def getTheme(self) -> str:
+        return self._settings.theme
+
+    @Slot(str, result=str)
+    def setTheme(self, mode: str) -> str:
+        """切换主题（light | dark | system）并持久化；返回给状态栏的提示。"""
+        if mode not in ("light", "dark", "system"):
+            return f"未知主题：{mode}"
+        self._settings.theme = mode
+        self._settings.save()
+        self.settingsChanged.emit()
+        return mode
+
+    theme = Property(str, getTheme, notify=settingsChanged)
+
+    def getLanguage(self) -> str:
+        return self._settings.language
+
+    @Slot(str, result=str)
+    def setLanguage(self, lang: str) -> str:
+        """切换界面语言（zh | en）并持久化。"""
+        if lang not in ("zh", "en"):
+            return f"未知语言：{lang}"
+        self._settings.language = lang
+        self._settings.save()
+        self.settingsChanged.emit()
+        return lang
+
+    language = Property(str, getLanguage, notify=settingsChanged)
+
+    def getSidebarWidth(self) -> int:
+        return self._settings.sidebar_width
+
+    @Slot(int)
+    def setSidebarWidth(self, w: int) -> None:
+        """记住用户拖拽后的侧栏宽度（Qt 不自动持久化布局）。"""
+        from .settings import MAX_SIDEBAR, MIN_SIDEBAR
+        w = max(MIN_SIDEBAR, min(MAX_SIDEBAR, int(w)))
+        if w != self._settings.sidebar_width:
+            self._settings.sidebar_width = w
+            self._settings.save()
+
+    sidebarWidth = Property(int, getSidebarWidth, setSidebarWidth, notify=settingsChanged)
+
+    @Slot(result="QVariant")
+    def pathInfo(self) -> list[dict]:
+        """5 条可改路径的当前生效值 + 是否被环境变量/设置覆盖（设置面板用）。"""
+        eff = self._settings.effective_paths()
+        out: list[dict] = []
+        for key, desc in PATH_KEYS.items():
+            overridden = bool(self._settings.paths.get(key))
+            env_forced = self._path_env_forced(key)
+            out.append({
+                "key": key,
+                "desc": desc,
+                "path": eff[key],
+                "custom": overridden,
+                "envForced": env_forced,
+            })
+        return out
+
+    @staticmethod
+    def _path_env_forced(key: str) -> bool:
+        """该路径是否由**外部**设置的（settings.json 之外的）环境变量强制。
+
+        用于设置面板警示：环境变量优先级最高，此时 UI 改了也不生效。
+        """
+        mapping = {
+            "dataHome": "SOUNDCATCHER_DATA_HOME",
+            "stateDir": "SOUNDCATCHER_APPDATA",
+            "modelsDir": "SOUNDCATCHER_MODELS",
+            "catalogDir": "SOUNDCATCHER_CATALOG",
+            "exportDir": "SOUNDCATCHER_EXPORT_DIR",
+        }
+        return bool(os.environ.get(mapping.get(key, "")))
+
+    @Slot(result=str)
+    def appVersion(self) -> str:
+        """应用版本（关于对话框用）；读不到就回退占位符，不抛错。"""
+        try:
+            from .. import __version__ as v
+            return str(v)
+        except Exception:  # noqa: BLE001
+            return "0.1.0"
+
+    @Slot(result=str)
+    def settingsFilePath(self) -> str:
+        return str(self._settings.path)
+
+    @Slot(str, str, bool, result="QVariant")
+    def setPath(self, key: str, new_path: str, migrate: bool = True) -> dict:
+        """改一条可改路径，可选把旧数据搬过去。
+
+        流程（用户原话：「更改后直接把之前的移过去，然后是不是需要重启软件？
+        然后把旧的删除」）：
+        1. 校验 key；``new_path`` 空 = 恢复默认（只改配置，不搬）
+        2. 环境变量已强制该项 → 拒绝（改了也不生效，直接告知）
+        3. 需要迁移且旧目录有内容 → ``migrate_path(mode="move")``
+        4. 写 settings.json（**不删旧目录**，只留空壳，让用户自己确认后处理）
+        5. 发 ``restartRequired``（路径在进程启动早期被 config 捕获，热改不生效）
+
+        返回 ``{"ok", "msg", "needRestart", "migrated", "key"}``。
+        """
+        from .settings import PATH_KEYS, migrate_path
+
+        if key not in PATH_KEYS:
+            return {"ok": False, "msg": f"未知路径项：{key}", "needRestart": False,
+                    "migrated": 0, "key": key}
+        if self._path_env_forced(key):
+            return {"ok": False,
+                    "msg": "该项被环境变量强制（SOUNDCATCHER_*），设置面板改了不生效。"
+                           "请先清除对应环境变量。",
+                    "needRestart": False, "migrated": 0, "key": key}
+
+        new_path = (new_path or "").strip()
+        old_eff = self._settings.effective_paths().get(key, "")
+        migrated = 0
+        note = ""
+
+        if not new_path:
+            # 恢复默认
+            self._settings.paths[key] = None
+            self._settings.save()
+            self.settingsChanged.emit()
+            return {"ok": True, "msg": f"已恢复默认：{old_eff}", "needRestart": True,
+                    "migrated": 0, "key": key}
+
+        np = Path(new_path).expanduser()
+        if migrate and old_eff and Path(old_eff) != np:
+            res = migrate_path(key, old_eff, np, mode="move")
+            if not res.ok:
+                return {"ok": False, "msg": res.summary(), "needRestart": False,
+                        "migrated": 0, "key": key}
+            migrated = res.moved
+            note = res.summary()
+
+        self._settings.paths[key] = str(np)
+        self._settings.save()
+        self.settingsChanged.emit()
+        msg = note or f"路径已更新：{np}"
+        self.restartRequired.emit(msg)
+        return {"ok": True, "msg": msg, "needRestart": True, "migrated": migrated, "key": key}
+
+    @Slot(str, str, result="QVariant")
+    def previewPathMove(self, key: str, new_path: str) -> dict:
+        """迁移前预演：告诉 UI 会搬多少条目、有没有拦路问题（不改任何东西）。"""
+        from .settings import PATH_KEYS, migrate_path
+
+        if key not in PATH_KEYS:
+            return {"ok": False, "msg": f"未知路径项：{key}", "count": 0}
+        old_eff = self._settings.effective_paths().get(key, "")
+        np = (new_path or "").strip()
+        if not np:
+            return {"ok": True, "msg": "将恢复为默认路径（无需迁移）", "count": 0}
+        res = migrate_path(key, old_eff, Path(np).expanduser(), mode="move", dry_run=True)
+        return {"ok": res.ok, "msg": res.summary() if not res.ok else
+                f"将移动 {res.moved} 个条目：{old_eff} → {np}",
+                "count": res.moved, "old": old_eff, "new": np}
+
+    @Slot(str, result=str)
+    def openFolder(self, path: str) -> str:
+        """在资源管理器里打开目录（菜单「打开数据目录」等用）。"""
+        p = Path(path) if path else Path.home()
+        if not p.exists():
+            return f"目录不存在：{p}"
+        try:
+            if os.name == "nt":
+                os.startfile(str(p))  # noqa: S606  (Windows 专用，无更安全替代)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(p)])
+            else:
+                subprocess.Popen(["xdg-open", str(p)])
+        except OSError as exc:
+            return f"打开失败：{exc}"
+        return f"已打开：{p}"
+
+    @Slot(result=str)
+    def openDataFolder(self) -> str:
+        return self.openFolder(str(_data_home().parent))
+
+    @Slot(result=str)
+    def openExportFolder(self) -> str:
+        return self.openFolder(str(_export_dir()))
 
     @Slot(bool)
     def setSearching(self, on: bool) -> None:

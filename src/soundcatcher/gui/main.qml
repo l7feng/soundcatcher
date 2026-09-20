@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Dialogs
 import QtQuick.Layouts
+import "."
 
 ApplicationWindow {
     id: root
@@ -10,23 +11,29 @@ ApplicationWindow {
     minimumWidth: 1000
     minimumHeight: 640
     visible: true
-    color: cBg
-    title: "SoundCatcher — 本地 AI 音效库（Local AI Sound Library）"
+    color: Theme.bg
+    title: I18n.t("app.title")
 
-    // ---------- 暗色主题 ----------
-    readonly property color cBg: "#1c1d22"
-    readonly property color cPanel: "#23252d"
-    readonly property color cPanel2: "#2a2d37"
-    readonly property color cLine: "#363b48"
-    readonly property color cText: "#d9dce3"
-    readonly property color cTextDim: "#8d93a1"
-    readonly property color cAccent: "#7aa2f7"
-    readonly property color cAccentDark: "#5d83d9"
-    readonly property color cGreen: "#9ece6a"
-    readonly property color cOrange: "#ff9e64"
-    readonly property color cRed: "#f7768e"
-    readonly property color cRowHover: "#30323e"
-    readonly property color cRowSel: "#39415a"
+    // ---------- 主题色板（集中在 Theme.qml，此处只做别名）----------
+    // 保留 cXxx 短别名：既让既有 300+ 处绑定零改动，也避免以后新增控件
+    // 又要记一套新名字。**禁止再写颜色字面量** —— 亮/暗切换会漏掉硬编码色。
+    // 注意：这里**必须用 property color 绑定**，不能用 `property alias` ——
+    // QML 不允许 alias 指向单例（实测报 `Invalid alias reference. Unable to
+    // find id "Theme"` 致使整份 main.qml 加载失败）。绑定同样能随 Theme 热切换。
+    readonly property color cBg: Theme.bg
+    readonly property color cPanel: Theme.panel
+    readonly property color cPanel2: Theme.panel2
+    readonly property color cLine: Theme.line
+    readonly property color cText: Theme.text
+    readonly property color cTextDim: Theme.textDim
+    readonly property color cAccent: Theme.accent
+    readonly property color cAccentDark: Theme.accentDark
+    readonly property color cGreen: Theme.green
+    readonly property color cOrange: Theme.orange
+    readonly property color cRed: Theme.red
+    readonly property color cRowHover: Theme.rowHover
+    readonly property color cRowSel: Theme.rowSel
+    readonly property color cOnColor: Theme.onColor
 
     // ---------- 状态 ----------
     property int libTotal: 0
@@ -48,8 +55,8 @@ ApplicationWindow {
 
     // -------- 改标：打开分类选择弹窗 + 搜索过滤 --------
     function openRelabel(fileId, filename) {
-        if (!fileId || fileId <= 0) { showStatus("该条目没有 fileId，无法改标"); return }
-        if (catalogList.length === 0) { showStatus("UCS 语料未就绪（data/ucs/catalog.json）"); return }
+        if (!fileId || fileId <= 0) { showStatus(I18n.t("status.badFileId")); return }
+        if (catalogList.length === 0) { showStatus(I18n.t("status.noCatalog")); return }
         relabelPopup.targetFileId = fileId
         relabelPopup.targetName = filename
         catSearchField.text = ""
@@ -91,18 +98,18 @@ ApplicationWindow {
     // -------- 拖入参考音频 → 以声搜声 --------
     function similarFromDrop(drop) {
         if (!drop.hasUrls || drop.urls.length === 0) {
-            showStatus("请拖入一个音频文件（不支持文件夹/文本）")
+            showStatus(I18n.t("drop.badType"))
             return
         }
         var p = urlToPath(drop.urls[0])
         var ext = p.slice(p.lastIndexOf(".") + 1).toLowerCase()
         if (["wav","aif","aiff","flac","mp3","m4a","ogg","opus","caf","rf64","wma","aac"].indexOf(ext) < 0) {
-            showStatus("不支持的文件类型：" + ext + "（请拖入音频文件）")
+            showStatus(I18n.t("drop.unsupported", ext))
             return
         }
         dragHint.visible = false
         backend.doSimilar(p, 60)
-        showStatus("以声搜声：" + p.slice(p.lastIndexOf("/") + 1))
+        showStatus(I18n.t("drop.searching", p.slice(p.lastIndexOf("/") + 1)))
     }
 
     // -------- 键盘导航：结果列表当前行动作（供 Keys/快捷键复用） --------
@@ -116,7 +123,9 @@ ApplicationWindow {
         if (resultView.currentIndex < 0 || resultView.currentIndex >= resultsModel.count) return
         var it = resultsModel.get(resultView.currentIndex)
         backend.toggleFavorite(it.path, it.filename, it.fileId)
-        statusNote = (backend.isFavorite(it.path) ? "★ 已收藏：" : "☆ 已取消：") + it.filename
+        statusNote = backend.isFavorite(it.path)
+            ? I18n.t("status.fav.on", it.filename)
+            : I18n.t("status.fav.off", it.filename)
     }
     function similarCurrentRow() {
         if (resultView.currentIndex < 0 || resultView.currentIndex >= resultsModel.count) return
@@ -128,13 +137,44 @@ ApplicationWindow {
     function expandAllUcs() {
         var n = backend.ucsModelCount
         for (var r = 0; r < n; r++) ucsTreeView.expand(ucsTreeView.index(r, 0))
-        statusNote = "已展开全部 " + n + " 个 UCS 分类"
+        statusNote = I18n.t("ucsTree.expandedAll", n)
     }
     function collapseAllUcs() {
         var n = backend.ucsModelCount
         for (var r = 0; r < n; r++) ucsTreeView.collapse(ucsTreeView.index(r, 0))
-        statusNote = "已折叠全部分类"
+        statusNote = I18n.t("ucsTree.collapsedAll")
     }
+
+    // 侧栏宽度复位到默认 320（菜单项 + 双击分隔条共用）
+    function resetSidebarWidth() {
+        backend.setSidebarWidth(320)
+        sidebar.SplitView.preferredWidth = 320
+        showStatus(I18n.t("status.sidebarReset", 320))
+    }
+
+    // ---------- 自动化探针挂钩（tests/theme_probe.py 用） ----------
+    // QML 函数带参数时，从 Python 的 invokeMethod 调用不可靠（元对象里没有匹配的
+    // slot 签名）。所以这里提供**无参**中转函数：探针只调它，参数由探针先写进
+    // `probeArgs`。生产代码不受影响（不调用即无副作用）。
+    property var probeArgs: []
+    function probeApply() {
+        var mode = probeArgs.length > 0 ? probeArgs[0] : "dark"
+        var lang = probeArgs.length > 1 ? probeArgs[1] : "zh"
+        applyTheme(mode)
+        applyLanguage(lang)
+        // 读回真实生效值，供探针断言（比猜内部状态可靠）
+        probeResult = ({
+            themeMode: Theme.mode,
+            isDark: Theme.isDark,
+            lang: I18n.lang,
+            title: title,
+            bg: String(Theme.bg),
+            onColor: String(Theme.onColor),
+            sidebarWidth: sidebar.width,
+            treeHeight: ucsTreeView.height
+        })
+    }
+    property var probeResult: ({})
 
     function currentMode() {
         if (modeSemantic.checked) return "semantic"
@@ -172,8 +212,8 @@ ApplicationWindow {
         function onSearchFinished(items) {
             resultsModel.clear()
             for (var i = 0; i < items.length; i++) resultsModel.append(items[i])
-            statusNote = "Hit（命中）" + items.length + " · Latency（延迟）已记录"
-            emptyText.text = items.length === 0 ? "No results（无结果）— 换个说法试试" : ""
+            statusNote = I18n.t("status.hit", items.length)
+            emptyText.text = items.length === 0 ? I18n.t("results.noHit") : ""
         }
         function onSearchFailed(msg) {
             statusNote = "✗ " + msg
@@ -186,15 +226,15 @@ ApplicationWindow {
             libTotal = total; libEmbedded = embedded; libFailed = failed
         }
         function onQueryLatency(sec) {
-            statusNote = "Query（查询）耗时 " + (sec * 1000).toFixed(1) + " ms"
+            statusNote = I18n.t("status.latency", (sec * 1000).toFixed(1))
         }
         function onWaveformReady(fileId, peaks) {
             waveCanvas.peaks = peaks
         }
         function onUcsTreeChanged() {
             ucsHint = backend.ucsModelCount === 0
-                ? "未找到 UCS 语料（data/ucs/catalog.json）— 先运行 soundcatcher ucs init"
-                : "点击叶子分类浏览 · 计数随 ucs tag 推进"
+                ? I18n.t("ucsTree.noCorpus")
+                : I18n.t("ucsTree.hint")
             // 打开时展开前 3 个分类，方便第一眼看到结构
             // 注意：Qt 6.11 TreeView 用 index(row, column)，modelIndex() 已废弃
             var n = Math.min(3, backend.ucsModelCount)
@@ -205,8 +245,8 @@ ApplicationWindow {
         function onBrowseFinished(items) {
             resultsModel.clear()
             for (var i = 0; i < items.length; i++) resultsModel.append(items[i])
-            statusNote = "UCS Browse（分类浏览）· " + items.length + " 条"
-            emptyText.text = items.length === 0 ? "该分类暂无已打标文件（等待 ucs tag 全量打标）" : ""
+            statusNote = I18n.t("results.browse", items.length)
+            emptyText.text = items.length === 0 ? I18n.t("results.browseEmpty") : ""
         }
         function onFavoritesChanged() {
             syncFavorites()
@@ -300,6 +340,180 @@ ApplicationWindow {
         onActivated: scanDirField.forceActiveFocus()
     }
 
+    // ---------- 菜单栏：文件 / 设置 / 帮助 ----------
+    // 承载「主题三态切换 + 语言切换 + 路径设置」三个产品化入口。
+    // QML MenuBar 挂在 ApplicationWindow 上会自动占顶部一条（不用手工布局）。
+    menuBar: MenuBar {
+        id: mainMenu
+        font.pixelSize: 12
+
+        // 自绘背景：默认样式在深色主题下与面板同色，看不出是一条 bar
+        background: Rectangle {
+            implicitHeight: 30
+            color: cPanel
+            Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: cLine }
+        }
+        delegate: MenuBarItem {
+            id: mbi
+            implicitHeight: 28
+            contentItem: Label {
+                text: mbi.text
+                color: mbi.highlighted ? cOnColor : cText
+                font.pixelSize: 12
+                verticalAlignment: Text.AlignVCenter
+            }
+            background: Rectangle {
+                radius: 4
+                color: mbi.highlighted ? cAccent : "transparent"
+            }
+        }
+
+        Menu {
+            title: I18n.t("menu.file")
+            delegate: root.menuItemDelegate
+            MenuItem {
+                text: I18n.t("menu.openDataDir")
+                onTriggered: showStatus(backend.openDataFolder())
+            }
+            MenuItem {
+                text: I18n.t("menu.openExportDir")
+                onTriggered: showStatus(backend.openExportFolder())
+            }
+            MenuSeparator {}
+            MenuItem {
+                text: I18n.t("menu.exportFav")
+                enabled: favoritesModel.count > 0
+                onTriggered: showStatus(backend.exportFavorites("md"))
+            }
+            MenuSeparator {}
+            MenuItem {
+                text: I18n.t("menu.quit")
+                onTriggered: Qt.quit()
+            }
+        }
+
+        Menu {
+            title: I18n.t("menu.settings")
+            delegate: root.menuItemDelegate
+
+            Menu {
+                title: I18n.t("menu.theme")
+                delegate: root.menuItemDelegate
+                // 三态互斥；当前态打勾。不用 ActionGroup 是为了少一层间接
+                MenuItem {
+                    text: I18n.t("menu.theme.light")
+                    checkable: true
+                    checked: Theme.mode === "light"
+                    onTriggered: root.applyTheme("light")
+                }
+                MenuItem {
+                    text: I18n.t("menu.theme.dark")
+                    checkable: true
+                    checked: Theme.mode === "dark"
+                    onTriggered: root.applyTheme("dark")
+                }
+                MenuItem {
+                    text: I18n.t("menu.theme.system")
+                    checkable: true
+                    checked: Theme.mode === "system"
+                    onTriggered: root.applyTheme("system")
+                }
+            }
+
+            Menu {
+                title: I18n.t("menu.language")
+                delegate: root.menuItemDelegate
+                MenuItem {
+                    text: "中文"
+                    checkable: true
+                    checked: I18n.lang === "zh"
+                    onTriggered: root.applyLanguage("zh")
+                }
+                MenuItem {
+                    text: "English"
+                    checkable: true
+                    checked: I18n.lang === "en"
+                    onTriggered: root.applyLanguage("en")
+                }
+            }
+
+            MenuSeparator {}
+            MenuItem {
+                text: I18n.t("menu.paths")
+                onTriggered: pathsDialog.open()
+            }
+            MenuSeparator {}
+            MenuItem {
+                text: I18n.t("menu.expandAll")
+                onTriggered: root.expandAllUcs()
+            }
+            MenuItem {
+                text: I18n.t("menu.collapseAll")
+                onTriggered: root.collapseAllUcs()
+            }
+            MenuSeparator {}
+            MenuItem {
+                text: I18n.t("menu.resetLayout")
+                onTriggered: root.resetSidebarWidth()
+            }
+        }
+
+        Menu {
+            title: I18n.t("menu.help")
+            delegate: root.menuItemDelegate
+            MenuItem {
+                text: I18n.t("menu.shortcuts")
+                onTriggered: shortcutsDialog.open()
+            }
+            MenuItem {
+                text: I18n.t("menu.about")
+                onTriggered: aboutDialog.open()
+            }
+        }
+    }
+
+    // 菜单项统一样式（暗/亮主题下都要可读；默认样式在深色主题里文字是深色）
+    readonly property Component menuItemDelegate: MenuItem {
+        implicitHeight: 28
+        contentItem: Label {
+            text: parent.text
+            color: cText
+            font.pixelSize: 12
+            leftPadding: 8
+            verticalAlignment: Text.AlignVCenter
+        }
+        background: Rectangle {
+            color: parent.highlighted ? cAccent : "transparent"
+        }
+        arrow: Label {
+            text: "›"
+            color: cTextDim
+            font.pixelSize: 13
+            x: parent.width - 18
+            y: (parent.height - height) / 2
+            visible: parent.subMenu !== null
+        }
+        indicator: Label {
+            text: parent.checked ? "✓" : ""
+            color: cAccent
+            font.pixelSize: 12
+            x: 2
+            y: (parent.height - height) / 2
+        }
+    }
+
+    // ---------- 主题 / 语言切换（热生效 + 持久化）----------
+    function applyTheme(mode) {
+        backend.setTheme(mode)
+        Theme.setMode(mode)
+        showStatus(I18n.t("status.theme", I18n.themeName(mode)))
+    }
+    function applyLanguage(lang) {
+        backend.setLanguage(lang)
+        I18n.setLang(lang)
+        showStatus(I18n.t("status.lang", I18n.langName()))
+    }
+
     // ---------- 顶层布局 ----------
     ColumnLayout {
         anchors.fill: parent
@@ -326,13 +540,13 @@ ApplicationWindow {
                     spacing: 1
                     Layout.maximumWidth: 210
                     Label {
-                        text: "SoundCatcher"
+                        text: I18n.t("app.about")
                         color: cText
                         font.pixelSize: 18
                         font.bold: true
                     }
                     Label {
-                        text: "全离线音效库（Offline Sound Library）"
+                        text: I18n.t("app.subtitle")
                         color: cTextDim
                         font.pixelSize: 11
                     }
@@ -343,7 +557,7 @@ ApplicationWindow {
                 ButtonGroup { id: modeGroup }
                 Button {
                     id: modeSemantic
-                    text: "Semantic（语义）"
+                    text: I18n.t("mode.semantic")
                     checkable: true
                     checked: true
                     ButtonGroup.group: modeGroup
@@ -358,7 +572,7 @@ ApplicationWindow {
                     }
                     contentItem: Label {
                         text: modeSemantic.text
-                        color: modeSemantic.checked ? "#10131a" : cText
+                        color: modeSemantic.checked ? cOnColor : cText
                         font.pixelSize: 11
                         font.bold: modeSemantic.checked
                         horizontalAlignment: Text.AlignHCenter
@@ -367,7 +581,7 @@ ApplicationWindow {
                 }
                 Button {
                     id: modeKeyword
-                    text: "Keyword（关键词）"
+                    text: I18n.t("mode.keyword")
                     checkable: true
                     ButtonGroup.group: modeGroup
                     property string mode: "keyword"
@@ -381,7 +595,7 @@ ApplicationWindow {
                     }
                     contentItem: Label {
                         text: modeKeyword.text
-                        color: modeKeyword.checked ? "#10131a" : cText
+                        color: modeKeyword.checked ? cOnColor : cText
                         font.pixelSize: 11
                         font.bold: modeKeyword.checked
                         horizontalAlignment: Text.AlignHCenter
@@ -390,7 +604,7 @@ ApplicationWindow {
                 }
                 Button {
                     id: modeHybrid
-                    text: "Hybrid（混合）"
+                    text: I18n.t("mode.hybrid")
                     checkable: true
                     ButtonGroup.group: modeGroup
                     property string mode: "hybrid"
@@ -404,7 +618,7 @@ ApplicationWindow {
                     }
                     contentItem: Label {
                         text: modeHybrid.text
-                        color: modeHybrid.checked ? "#10131a" : cText
+                        color: modeHybrid.checked ? cOnColor : cText
                         font.pixelSize: 11
                         font.bold: modeHybrid.checked
                         horizontalAlignment: Text.AlignHCenter
@@ -417,7 +631,7 @@ ApplicationWindow {
                     id: searchField
                     Layout.fillWidth: true
                     Layout.minimumWidth: 240
-                    placeholderText: "Search sounds（搜索音效）— 中文/英文均可，如：玻璃破碎，带回响的"
+                    placeholderText: I18n.t("search.placeholder")
                     color: cText
                     placeholderTextColor: cTextDim
                     selectByMouse: true
@@ -440,7 +654,7 @@ ApplicationWindow {
                 // 搜索按钮
                 Button {
                     id: searchBtn
-                    text: "Search（搜索）"
+                    text: I18n.t("btn.search")
                     enabled: searchField.text.trim().length > 0
                     onClicked: root.doSearch()
                     background: Rectangle {
@@ -450,7 +664,7 @@ ApplicationWindow {
                     }
                     contentItem: Label {
                         text: searchBtn.text
-                        color: searchBtn.enabled ? "#10131a" : cTextDim
+                        color: searchBtn.enabled ? cOnColor : cTextDim
                         font.bold: true
                     }
                 }
@@ -458,15 +672,47 @@ ApplicationWindow {
         }
 
         // ================= 主体 =================
-        RowLayout {
+        // SplitView 而非 RowLayout：侧栏与结果区之间的分隔条可拖拽调宽（用户要求）。
+        // 宽度持久化到 settings.json（backend.sidebarWidth），下次启动恢复。
+        //
+        // ⚠️ Qt 6.11 的 SplitView（QQuickSplitView）**没有 leftWidth / rightWidth 属性**，
+        // 也不暴露「子项当前宽度」。可写入口只有附加属性
+        // SplitView.preferredWidth / minimumWidth / maximumWidth（见
+        // QtQuick/Templates/plugins.qmltypes 的 QQuickSplitViewAttached）。
+        // 因此这里：
+        //   ① 用 sidebar.preferredWidth 绑定 backend.sidebarWidth 做初值；
+        //   ② 用 sidebar.width（拖拽后被 SplitView 重写）读回当前宽度并持久化。
+        SplitView {
+            id: sideSplit
             Layout.fillWidth: true
             Layout.fillHeight: true
-            spacing: 0
+            orientation: Qt.Horizontal
+
+            handle: Rectangle {
+                implicitWidth: 5
+                implicitHeight: 5
+                color: SplitHandle.pressed ? cAccent
+                     : (SplitHandle.hovered ? cAccentDark : "transparent")
+                // 细到手感不好找 → 悬停时给一条可见的竖线
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: 1
+                    height: parent.height
+                    color: SplitHandle.hovered || SplitHandle.pressed ? cAccent : cLine
+                }
+                // 双击分隔条 = 重置为默认 320（和菜单「重置侧栏宽度」同义）
+                TapHandler {
+                    onDoubleTapped: root.resetSidebarWidth()
+                }
+            }
 
             // ---------- 左侧栏 ----------
             Rectangle {
-                Layout.preferredWidth: 320
-                Layout.minimumWidth: 300
+                id: sidebar
+                objectName: "sidebar"
+                SplitView.preferredWidth: backend.sidebarWidth
+                SplitView.minimumWidth: 260
+                SplitView.maximumWidth: 640
                 Layout.fillHeight: true
                 color: cPanel
                 border.color: cLine
@@ -491,12 +737,12 @@ ApplicationWindow {
                             anchors.margins: 12
                             spacing: 4
                             Label {
-                                text: "Library（音效库）"
+                                text: I18n.t("card.library")
                                 color: cTextDim
                                 font.pixelSize: 11
                             }
                             Label {
-                                text: root.libTotal + " files（文件）"
+                                text: root.libTotal + " " + I18n.t("card.files")
                                 color: cText
                                 font.pixelSize: 16
                                 font.bold: true
@@ -504,14 +750,14 @@ ApplicationWindow {
                             // 侧栏窄（236~264px），横向并排两行一定被截断
                             // → 改成上/下两行，各自独占整行宽度
                             Label {
-                                text: "Embedded（已嵌入）: " + root.libEmbedded
+                                text: I18n.t("card.embedded") + ": " + root.libEmbedded
                                 color: cGreen
                                 font.pixelSize: 11
                                 elide: Text.ElideRight
                                 Layout.fillWidth: true
                             }
                             Label {
-                                text: "Failed（失败）: " + root.libFailed
+                                text: I18n.t("card.failed") + ": " + root.libFailed
                                 color: root.libFailed > 0 ? cRed : cTextDim
                                 font.pixelSize: 11
                                 elide: Text.ElideRight
@@ -532,7 +778,7 @@ ApplicationWindow {
                             anchors.margins: 10
                             spacing: 5
                             Label {
-                                text: "Scan（扫描目录）"
+                                text: I18n.t("scan.title")
                                 color: cTextDim
                                 font.pixelSize: 11
                             }
@@ -541,7 +787,7 @@ ApplicationWindow {
                                 TextField {
                                     id: scanDirField
                                     Layout.fillWidth: true
-                                    placeholderText: "目录，如 D:\\音效库"
+                                    placeholderText: I18n.t("scan.placeholder")
                                     color: cText
                                     placeholderTextColor: cTextDim
                                     selectByMouse: true
@@ -555,7 +801,7 @@ ApplicationWindow {
                                     }
                                 }
                                 Button {
-                                    text: backend.scanState === "running" ? "Stop（停止）" : "Start（开始）"
+                                    text: backend.scanState === "running" ? I18n.t("btn.stop") : I18n.t("btn.start")
                                     implicitWidth: 92
                                     onClicked: {
                                         showStatus(backend.scanState === "running"
@@ -565,13 +811,13 @@ ApplicationWindow {
                                     background: Rectangle {
                                         radius: 7
                                         color: backend.scanState === "running"
-                                              ? (parent.hovered ? cRed : "#5a3a44")
+                                              ? (parent.hovered ? cRed : Theme.dangerBg)
                                               : (parent.hovered ? cAccentDark : cPanel)
                                         border.color: backend.scanState === "running" ? cRed : cLine
                                     }
                                     contentItem: Label {
                                         text: parent.text
-                                        color: parent.hovered ? "#10131a" : cText
+                                        color: parent.hovered ? cOnColor : cText
                                         font.pixelSize: 11
                                     }
                                 }
@@ -581,7 +827,7 @@ ApplicationWindow {
                                       ? "◉ " + backend.scanMessage
                                       : (backend.scanMessage.length > 0
                                          ? backend.scanMessage
-                                         : "子进程独立写库，GUI 只读共存（WAL）")
+                                         : I18n.t("scan.hint"))
                                 color: backend.scanState === "running" ? cGreen
                                      : (backend.scanState === "failed" ? cRed : cTextDim)
                                 font.pixelSize: 10
@@ -593,6 +839,10 @@ ApplicationWindow {
                     }
 
                     // ===== 侧栏导航：UCS 分类 / 历史 / 收藏 =====
+                    // ⚠️ 宽度不能用 `sideTabs.width` 反推：TabBar 的 implicitWidth 是由
+                    // 子项 width 聚合出来的，子项又绑定 sideTabs.width → 双向依赖，
+                    // Qt 会报 "Binding loop detected for property implicitWidth"。
+                    // 改绑 **父容器（ColumnLayout）的 width**，它由 Layout 单向给出，不再成环。
                     TabBar {
                         id: sideTabs
                         objectName: "sideTabs"
@@ -608,10 +858,10 @@ ApplicationWindow {
                         readonly property real _wHis: 12
                         readonly property real _wFav: 14
                         readonly property real _wSum: _wUcs + _wHis + _wFav
-                        readonly property real _avail: width - spacing * 2
+                        readonly property real _avail: parent.width - spacing * 2
                         TabButton {
                             id: tabUcs
-                            text: "UCS 分类"
+                            text: I18n.t("side.ucs")
                             width: sideTabs._avail * sideTabs._wUcs / sideTabs._wSum
                             background: Rectangle {
                                 radius: 6
@@ -621,7 +871,7 @@ ApplicationWindow {
                             }
                             contentItem: Label {
                                 text: tabUcs.text
-                                color: tabUcs.checked ? "#10131a" : cText
+                                color: tabUcs.checked ? cOnColor : cText
                                 font.pixelSize: 11
                                 font.bold: tabUcs.checked
                                 horizontalAlignment: Text.AlignHCenter
@@ -631,7 +881,7 @@ ApplicationWindow {
                         }
                         TabButton {
                             id: tabHistory
-                            text: "History 历史"
+                            text: I18n.t("side.history")
                             width: sideTabs._avail * sideTabs._wHis / sideTabs._wSum
                             background: Rectangle {
                                 radius: 6
@@ -641,7 +891,7 @@ ApplicationWindow {
                             }
                             contentItem: Label {
                                 text: tabHistory.text
-                                color: tabHistory.checked ? "#10131a" : cText
+                                color: tabHistory.checked ? cOnColor : cText
                                 font.pixelSize: 11
                                 font.bold: tabHistory.checked
                                 horizontalAlignment: Text.AlignHCenter
@@ -651,7 +901,7 @@ ApplicationWindow {
                         }
                         TabButton {
                             id: tabFavorites
-                            text: "Favorites 收藏"
+                            text: I18n.t("side.favorites")
                             width: sideTabs._avail * sideTabs._wFav / sideTabs._wSum
                             background: Rectangle {
                                 radius: 6
@@ -661,7 +911,7 @@ ApplicationWindow {
                             }
                             contentItem: Label {
                                 text: tabFavorites.text
-                                color: tabFavorites.checked ? "#10131a" : cText
+                                color: tabFavorites.checked ? cOnColor : cText
                                 font.pixelSize: 11
                                 font.bold: tabFavorites.checked
                                 horizontalAlignment: Text.AlignHCenter
@@ -688,19 +938,19 @@ ApplicationWindow {
                                 RowLayout {
                                     spacing: 4
                                     Label {
-                                        text: "UCS 分类树"
+                                        text: I18n.t("ucsTree.title")
                                         color: cTextDim
                                         font.pixelSize: 11
                                         font.bold: true
                                     }
                                     Item { Layout.fillWidth: true }
                                     Button {
-                                        text: "展开"
+                                        text: I18n.t("btn.expand")
                                         implicitHeight: 22
                                         implicitWidth: 40
                                         onClicked: root.expandAllUcs()
                                         ToolTip.visible: hovered
-                                        ToolTip.text: "展开全部 UCS 分类（Expand all）"
+                                        ToolTip.text: I18n.t("ucsTree.expandTip")
                                         background: Rectangle {
                                             radius: 6
                                             color: parent.hovered ? cAccentDark : cPanel2
@@ -708,19 +958,19 @@ ApplicationWindow {
                                         }
                                         contentItem: Label {
                                             text: parent.text
-                                            color: parent.hovered ? "#10131a" : cTextDim
+                                            color: parent.hovered ? cOnColor : cTextDim
                                             font.pixelSize: 10
                                             horizontalAlignment: Text.AlignHCenter
                                             verticalAlignment: Text.AlignVCenter
                                         }
                                     }
                                     Button {
-                                        text: "折叠"
+                                        text: I18n.t("btn.collapse")
                                         implicitHeight: 22
                                         implicitWidth: 40
                                         onClicked: root.collapseAllUcs()
                                         ToolTip.visible: hovered
-                                        ToolTip.text: "折叠全部分类（Collapse all）"
+                                        ToolTip.text: I18n.t("ucsTree.collapseTip")
                                         background: Rectangle {
                                             radius: 6
                                             color: parent.hovered ? cAccentDark : cPanel2
@@ -728,19 +978,19 @@ ApplicationWindow {
                                         }
                                         contentItem: Label {
                                             text: parent.text
-                                            color: parent.hovered ? "#10131a" : cTextDim
+                                            color: parent.hovered ? cOnColor : cTextDim
                                             font.pixelSize: 10
                                             horizontalAlignment: Text.AlignHCenter
                                             verticalAlignment: Text.AlignVCenter
                                         }
                                     }
                                     Button {
-                                        text: "刷新"
+                                        text: I18n.t("btn.refresh")
                                         implicitHeight: 22
                                         implicitWidth: 40
                                         onClicked: backend.refreshUcsTree()
                                         ToolTip.visible: hovered
-                                        ToolTip.text: "重新加载分类与计数（Refresh）"
+                                        ToolTip.text: I18n.t("ucsTree.refreshTip")
                                         background: Rectangle {
                                             radius: 6
                                             color: parent.hovered ? cAccentDark : cPanel2
@@ -748,7 +998,7 @@ ApplicationWindow {
                                         }
                                         contentItem: Label {
                                             text: parent.text
-                                            color: parent.hovered ? "#10131a" : cTextDim
+                                            color: parent.hovered ? cOnColor : cTextDim
                                             font.pixelSize: 10
                                             horizontalAlignment: Text.AlignHCenter
                                             verticalAlignment: Text.AlignVCenter
@@ -823,19 +1073,19 @@ ApplicationWindow {
 
                                 RowLayout {
                                     Label {
-                                        text: "Search History（历史）"
+                                        text: I18n.t("hist.title")
                                         color: cTextDim
                                         font.pixelSize: 11
                                         font.bold: true
                                     }
                                     Item { Layout.fillWidth: true }
                                     Button {
-                                        text: "Save（保存）"
+                                        text: I18n.t("btn.save")
                                         implicitHeight: 24
                                         enabled: searchField.text.trim().length > 0
                                         onClicked: {
                                             backend.saveSearch(searchField.text.trim(), currentMode())
-                                            showStatus("已保存搜索：" + searchField.text.trim())
+                                            showStatus(I18n.t("status.savedSearch", searchField.text.trim()))
                                         }
                                         background: Rectangle {
                                             radius: 6
@@ -844,12 +1094,12 @@ ApplicationWindow {
                                         }
                                         contentItem: Label {
                                             text: parent.text
-                                            color: parent.hovered ? "#10131a" : cTextDim
+                                            color: parent.hovered ? cOnColor : cTextDim
                                             font.pixelSize: 11
                                         }
                                     }
                                     Button {
-                                        text: "Clear（清空）"
+                                        text: I18n.t("btn.clear")
                                         implicitHeight: 24
                                         visible: historyModel.count > 0
                                         onClicked: historyModel.clear()
@@ -860,7 +1110,7 @@ ApplicationWindow {
                                         }
                                         contentItem: Label {
                                             text: parent.text
-                                            color: parent.hovered ? "#10131a" : cTextDim
+                                            color: parent.hovered ? cOnColor : cTextDim
                                             font.pixelSize: 11
                                         }
                                     }
@@ -871,7 +1121,7 @@ ApplicationWindow {
                                     spacing: 6
                                     visible: savedModel.count > 0
                                     Label {
-                                        text: "Saved（已保存，持久）"
+                                        text: I18n.t("saved.title")
                                         color: cGreen
                                         font.pixelSize: 10
                                         font.bold: true
@@ -945,7 +1195,7 @@ ApplicationWindow {
                                                 }
                                                 contentItem: Label {
                                                     text: parent.text
-                                                    color: parent.hovered ? "#10131a" : cTextDim
+                                                    color: parent.hovered ? cOnColor : cTextDim
                                                     font.pixelSize: 10
                                                 }
                                             }
@@ -954,7 +1204,7 @@ ApplicationWindow {
                                 }
 
                                 Label {
-                                    text: "Recent（本会话 " + historyModel.count + " 条）"
+                                    text: I18n.t("recent.title", historyModel.count)
                                     color: cTextDim
                                     font.pixelSize: 10
                                     font.bold: true
@@ -1025,7 +1275,7 @@ ApplicationWindow {
 
                                 RowLayout {
                                     Label {
-                                        text: "Favorites（收藏）"
+                                        text: I18n.t("fav.title")
                                         color: cTextDim
                                         font.pixelSize: 11
                                         font.bold: true
@@ -1038,11 +1288,11 @@ ApplicationWindow {
                                     }
                                     // 收藏夹导入：复用导出文件（md/csv/m3u）或纯路径列表
                                     Button {
-                                        text: "Import（导入）"
+                                        text: I18n.t("btn.import")
                                         implicitHeight: 24
                                         onClicked: importFavDialog.open()
                                         ToolTip.visible: hovered
-                                        ToolTip.text: "从导出的 md / csv / m3u 或路径列表文件导入收藏"
+                                        ToolTip.text: I18n.t("fav.importTip")
                                         background: Rectangle {
                                             radius: 6
                                             color: parent.hovered ? cAccentDark : cPanel2
@@ -1050,7 +1300,7 @@ ApplicationWindow {
                                         }
                                         contentItem: Label {
                                             text: parent.text
-                                            color: parent.hovered ? "#10131a" : cTextDim
+                                            color: parent.hovered ? cOnColor : cTextDim
                                             font.pixelSize: 11
                                         }
                                     }
@@ -1067,7 +1317,7 @@ ApplicationWindow {
                                         palette.button: cPanel2
                                         palette.base: cPanel2
                                         palette.highlight: cAccentDark
-                                        palette.highlightedText: "#10131a"
+                                        palette.highlightedText: cOnColor
                                         background: Rectangle {
                                             radius: 6
                                             color: parent.hovered ? cAccentDark : cPanel2
@@ -1077,7 +1327,7 @@ ApplicationWindow {
                                             x: exportFmtBox.width - 18
                                             y: exportFmtBox.height / 2 - 6
                                             text: "▾"
-                                            color: exportFmtBox.hovered ? "#10131a" : cTextDim
+                                            color: exportFmtBox.hovered ? cOnColor : cTextDim
                                             font.pixelSize: 10
                                         }
                                         delegate: ItemDelegate {
@@ -1092,7 +1342,7 @@ ApplicationWindow {
                                             }
                                             contentItem: Label {
                                                 text: parent.text
-                                                color: parent.highlighted ? "#10131a" : cText
+                                                color: parent.highlighted ? cOnColor : cText
                                                 font.pixelSize: 10
                                                 leftPadding: 8
                                                 verticalAlignment: Text.AlignVCenter
@@ -1100,7 +1350,7 @@ ApplicationWindow {
                                         }
                                     }
                                     Button {
-                                        text: "Export（导出）"
+                                        text: I18n.t("btn.export")
                                         implicitHeight: 24
                                         enabled: favoritesModel.count > 0
                                         onClicked: {
@@ -1114,14 +1364,14 @@ ApplicationWindow {
                                         }
                                         contentItem: Label {
                                             text: parent.text
-                                            color: parent.hovered ? "#10131a" : cTextDim
+                                            color: parent.hovered ? cOnColor : cTextDim
                                             font.pixelSize: 11
                                         }
                                     }
                                 }
                                 Label {
                                     visible: favoritesModel.count === 0
-                                    text: "在结果行点 ☆ 收藏 · 持久化到 %APPDATA%\\SoundCatcher"
+                                    text: I18n.t("fav.empty")
                                     color: cTextDim
                                     font.pixelSize: 10
                                     wrapMode: Text.WordWrap
@@ -1192,7 +1442,7 @@ ApplicationWindow {
                                                 }
                                                 contentItem: Label {
                                                     text: parent.text
-                                                    color: parent.hovered ? "#10131a" : cTextDim
+                                                    color: parent.hovered ? cOnColor : cTextDim
                                                     font.pixelSize: 10
                                                 }
                                             }
@@ -1212,7 +1462,7 @@ ApplicationWindow {
                     Label {
                         Layout.fillWidth: true
                         text: {
-                            if (backend.searching) return "Searching…（搜索中）"
+                            if (backend.searching) return I18n.t("status.searching")
                             return root.statusNote
                         }
                         color: backend.searching ? cOrange : cTextDim
@@ -1226,7 +1476,8 @@ ApplicationWindow {
 
             // ---------- 中央结果列表 ----------
             Rectangle {
-                Layout.fillWidth: true
+                SplitView.fillWidth: true
+                SplitView.minimumWidth: 420
                 Layout.fillHeight: true
                 color: cBg
 
@@ -1239,7 +1490,7 @@ ApplicationWindow {
                     RowLayout {
                         Label {
                             id: resultTitle
-                            text: "Results（结果）"
+                            text: I18n.t("results.title")
                             color: cTextDim
                             font.pixelSize: 12
                             font.bold: true
@@ -1287,7 +1538,7 @@ ApplicationWindow {
                             id: emptyText
                             anchors.centerIn: parent
                             visible: resultsModel.count === 0
-                            text: "输入查询开始搜索（Type a query to start）"
+                            text: I18n.t("results.empty")
                             color: cTextDim
                             font.pixelSize: 14
                         }
@@ -1334,7 +1585,7 @@ ApplicationWindow {
                                     Label {
                                         anchors.centerIn: parent
                                         text: "▶"
-                                        color: resultView.currentIndex === index ? "#10131a" : cTextDim
+                                        color: resultView.currentIndex === index ? cOnColor : cTextDim
                                         font.pixelSize: 12
                                     }
                                 }
@@ -1387,7 +1638,7 @@ ApplicationWindow {
                                         backend.toggleFavorite(row.model.path, row.model.filename, row.model.fileId)
                                     }
                                     ToolTip.visible: hovered
-                                    ToolTip.text: fav ? "取消收藏（Unfavorite）" : "收藏（Add to favorites）"
+                                    ToolTip.text: fav ? I18n.t("fav.tipOff") : I18n.t("fav.tipOn")
                                     background: Rectangle {
                                         radius: 7
                                         color: parent.hovered ? cAccentDark : cPanel2
@@ -1401,7 +1652,7 @@ ApplicationWindow {
                                 }
 
                                 Button {
-                                    text: "Similar（相似）"
+                                    text: I18n.t("btn.similar")
                                     onClicked: {
                                         backend.doSimilar(row.model.path, 60)
                                         resultView.currentIndex = index
@@ -1413,27 +1664,27 @@ ApplicationWindow {
                                     }
                                     contentItem: Label {
                                         text: parent.text
-                                        color: parent.hovered ? "#10131a" : cText
+                                        color: parent.hovered ? cOnColor : cText
                                         font.pixelSize: 12
                                     }
                                 }
 
                                 Button {
-                                    text: "改标（Relabel）"
+                                    text: I18n.t("btn.relabel")
                                     onClicked: {
                                         root.openRelabel(row.model.fileId, row.model.filename)
                                         resultView.currentIndex = index
                                     }
                                     ToolTip.visible: hovered
-                                    ToolTip.text: "人工修正 UCS 分类（写回 ucs_labels）"
+                                    ToolTip.text: I18n.t("relabel.tip")
                                     background: Rectangle {
                                         radius: 7
-                                        color: parent.hovered ? "#4a6b5a" : cPanel2
+                                        color: parent.hovered ? Theme.relabelHover : cPanel2
                                         border.color: parent.hovered ? cGreen : cLine
                                     }
                                     contentItem: Label {
                                         text: parent.text
-                                        color: parent.hovered ? "#10131a" : cText
+                                        color: parent.hovered ? cOnColor : cText
                                         font.pixelSize: 12
                                     }
                                 }
@@ -1441,6 +1692,26 @@ ApplicationWindow {
                         }
                     }
                 }
+            }
+        }
+
+        // 拖拽结束后才写盘：拖拽过程中 sidebar.width 每帧都在变，
+        // 逐帧写 settings.json 会打满磁盘 IO（且没必要）→ 停手 400ms 后再持久化。
+        Timer {
+            id: sidebarSaveTimer
+            interval: 400
+            repeat: false
+            onTriggered: {
+                // 只有用户真的改了宽度才写（避免启动时初值回写一次）
+                if (Math.round(sidebar.width) !== backend.sidebarWidth)
+                    backend.setSidebarWidth(Math.round(sidebar.width))
+            }
+        }
+        Connections {
+            target: sidebar
+            function onWidthChanged() {
+                if (sideSplit.resizing || Math.abs(Math.round(sidebar.width) - backend.sidebarWidth) >= 1)
+                    sidebarSaveTimer.restart()
             }
         }
 
@@ -1460,7 +1731,7 @@ ApplicationWindow {
                 // 当前文件
                 Label {
                     id: nowLabel
-                    text: "（未选择）（Nothing selected）"
+                    text: "（" + I18n.t("play.nothing") + "）"
                     color: cTextDim
                     font.pixelSize: 12
                     elide: Text.ElideMiddle
@@ -1477,21 +1748,21 @@ ApplicationWindow {
                     function paintWave(ctx) {
                         var pts = waveCanvas.peaks || []
                         ctx.clearRect(0, 0, waveCanvas.width, waveCanvas.height)
-                        ctx.fillStyle = "#191a20"
+                        ctx.fillStyle = Theme.canvasBg
                         ctx.fillRect(0, 0, waveCanvas.width, waveCanvas.height)
                         if (pts.length === 0) {
-                            ctx.fillStyle = "#8d93a1"
+                            ctx.fillStyle = cTextDim
                             // Canvas 的 ctx.font 不受 QApplication 默认字体影响，
                             // 必须显式点名含 CJK 字形的族，否则中文靠系统 fallback（可能变方框）
                             ctx.font = "13px 'Microsoft YaHei UI','Microsoft YaHei','SimHei',sans-serif"
                             ctx.textAlign = "center"
-                            ctx.fillText("选择结果以预览波形（Select a result to preview waveform）",
+                            ctx.fillText(I18n.t("play.waveHint"),
                                          waveCanvas.width / 2, waveCanvas.height / 2)
                             return
                         }
                         var mid = waveCanvas.height / 2
                         var step = waveCanvas.width / pts.length
-                        ctx.strokeStyle = "#7aa2f7"
+                        ctx.strokeStyle = cAccent
                         ctx.lineWidth = 2
                         ctx.beginPath()
                         for (var i = 0; i < pts.length; i++) {
@@ -1502,7 +1773,7 @@ ApplicationWindow {
                         }
                         ctx.stroke()
                         // 进度游标
-                        ctx.fillStyle = "#ff9e64"
+                        ctx.fillStyle = cOrange
                         ctx.fillRect(waveCanvas.progress * waveCanvas.width - 1, 0, 2, waveCanvas.height)
                     }
 
@@ -1523,7 +1794,7 @@ ApplicationWindow {
                         implicitHeight: 36
                         onClicked: backend.togglePlay()
                         background: Rectangle { radius: 8; color: parent.hovered ? cAccent : cPanel2; border.color: cLine }
-                        contentItem: Label { text: parent.text; color: parent.hovered ? "#10131a" : cText }
+                        contentItem: Label { text: parent.text; color: parent.hovered ? cOnColor : cText }
                     }
                     Slider {
                         id: posSlider
@@ -1539,7 +1810,7 @@ ApplicationWindow {
                         font.pixelSize: 12
                         font.family: "Consolas"
                     }
-                    Label { text: "Vol（音量）"; color: cTextDim; font.pixelSize: 11 }
+                    Label { text: I18n.t("play.vol"); color: cTextDim; font.pixelSize: 11 }
                     Slider {
                         Layout.preferredWidth: 110
                         from: 0; to: 1
@@ -1577,14 +1848,14 @@ ApplicationWindow {
             spacing: 8
 
             Label {
-                text: "改标（Relabel）— " + relabelPopup.targetName
+                text: I18n.t("relabel.title", relabelPopup.targetName)
                 color: cText
                 font.pixelSize: 14
                 font.bold: true
                 elide: Text.ElideMiddle
             }
             Label {
-                text: "选择 UCS 子分类写回 ucs_labels（source=manual，替换该文件全部自动分类）"
+                text: I18n.t("relabel.desc")
                 color: cTextDim
                 font.pixelSize: 10
                 wrapMode: Text.WordWrap
@@ -1595,7 +1866,7 @@ ApplicationWindow {
                 TextField {
                     id: catSearchField
                     Layout.fillWidth: true
-                    placeholderText: "搜索 753 个 UCS 分类（Search），中文/英文/CatID 均可…"
+                    placeholderText: I18n.t("relabel.searchPh")
                     color: cText
                     placeholderTextColor: cTextDim
                     selectByMouse: true
@@ -1608,7 +1879,7 @@ ApplicationWindow {
                     }
                 }
                 Button {
-                    text: "Clear（清除）"
+                    text: I18n.t("btn.clear")
                     implicitHeight: 28
                     enabled: catSearchField.text.length > 0
                     onClicked: catSearchField.text = ""
@@ -1619,7 +1890,7 @@ ApplicationWindow {
                     }
                     contentItem: Label {
                         text: parent.text
-                        color: parent.hovered ? "#10131a" : cTextDim
+                        color: parent.hovered ? cOnColor : cTextDim
                         font.pixelSize: 11
                     }
                 }
@@ -1693,7 +1964,7 @@ ApplicationWindow {
                 }
                 Item { Layout.fillWidth: true }
                 Button {
-                    text: "取消（Cancel）"
+                    text: I18n.t("btn.cancel")
                     implicitHeight: 28
                     onClicked: relabelPopup.close()
                     background: Rectangle {
@@ -1703,25 +1974,603 @@ ApplicationWindow {
                     }
                     contentItem: Label {
                         text: parent.text
-                        color: parent.hovered ? "#10131a" : cTextDim
+                        color: parent.hovered ? cOnColor : cTextDim
                         font.pixelSize: 11
                     }
                 }
                 Button {
-                    text: "确定（Apply）"
+                    text: I18n.t("btn.apply")
                     implicitHeight: 28
                     enabled: catList.currentIndex >= 0
                     onClicked: root.doRelabel(catModel.get(catList.currentIndex).catid)
                     background: Rectangle {
                         radius: 6
-                        color: parent.enabled ? (parent.hovered ? cAccent : "#3a4a6b") : cPanel2
+                        color: parent.enabled ? (parent.hovered ? cAccent : Theme.applyBg) : cPanel2
                         border.color: parent.enabled ? cAccent : cLine
                     }
                     contentItem: Label {
                         text: parent.text
-                        color: parent.enabled ? (parent.hovered ? "#10131a" : cText) : cTextDim
+                        color: parent.enabled ? (parent.hovered ? cOnColor : cText) : cTextDim
                         font.pixelSize: 11
                     }
+                }
+            }
+        }
+    }
+
+    // ---------- 路径设置对话框 ----------
+    // 五条可改路径：查看当前生效值 / 更改 / 迁移旧数据。
+    // 用户诉求原文：「输出的路径我想可以更改，可以在菜单栏设置。比如标签索引的
+    // 路径。更改后直接把之前的移过去，然后是不是需要重启软件？然后把旧的删除」
+    // → 迁移走 backend.setPath(migrate=true)；**不自动删旧目录**（只搬空留壳，
+    //   让用户自己确认后处理，符合「不可逆操作先确认」的一贯原则）。
+    Dialog {
+        id: pathsDialog
+        objectName: "pathsDialog"
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(760, root.width - 120)
+        height: Math.min(640, root.height - 100)
+        padding: 0
+
+        property var rows: []
+        property string restartNote: ""
+
+        function reload() { rows = backend.pathInfo() }
+        onOpened: { restartNote = ""; reload() }
+
+        background: Rectangle {
+            radius: 12
+            color: cPanel
+            border.color: cLine
+            border.width: 1
+        }
+
+        header: Label {
+            text: I18n.t("paths.title")
+            color: cText
+            font.pixelSize: 15
+            font.bold: true
+            leftPadding: 18
+            topPadding: 14
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 8
+            anchors.margins: 18
+
+            Label {
+                Layout.fillWidth: true
+                text: I18n.t("paths.desc")
+                color: cTextDim
+                font.pixelSize: 10
+                wrapMode: Text.WordWrap
+            }
+
+            ListView {
+                id: pathList
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                spacing: 8
+                model: ListModel { id: pathModel }
+
+                function sync() {
+                    pathModel.clear()
+                    var rs = pathsDialog.rows
+                    for (var i = 0; i < rs.length; i++) {
+                        pathModel.append({
+                            key: rs[i].key, desc: rs[i].desc, path: rs[i].path,
+                            custom: rs[i].custom, envForced: rs[i].envForced
+                        })
+                    }
+                }
+                Connections {
+                    target: pathsDialog
+                    function onRowsChanged() { pathList.sync() }
+                }
+                Component.onCompleted: sync()
+
+                delegate: Rectangle {
+                    id: pathRow
+                    required property int index
+                    required property var model
+                    width: pathList.width
+                    height: 78
+                    radius: 8
+                    color: cPanel2
+                    border.color: cLine
+                    border.width: 1
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 10
+                        spacing: 5
+
+                        RowLayout {
+                            spacing: 6
+                            Label {
+                                text: pathRow.model.desc
+                                color: cText
+                                font.pixelSize: 12
+                                font.bold: true
+                                elide: Text.ElideRight
+                                Layout.maximumWidth: 300
+                            }
+                            Chip {
+                                visible: pathRow.model.custom
+                                text: I18n.t("paths.custom")
+                                tone: "green"
+                            }
+                            Chip {
+                                visible: pathRow.model.envForced
+                                text: I18n.t("paths.envForced")
+                                tone: "accent"
+                            }
+                            Item { Layout.fillWidth: true }
+                            Button {
+                                text: I18n.t("paths.open")
+                                implicitHeight: 24
+                                implicitWidth: 64
+                                onClicked: showStatus(backend.openFolder(pathRow.model.path))
+                                background: Rectangle {
+                                    radius: 6
+                                    color: parent.hovered ? cAccentDark : cPanel
+                                    border.color: cLine
+                                }
+                                contentItem: Label {
+                                    text: parent.text
+                                    color: parent.hovered ? cOnColor : cTextDim
+                                    font.pixelSize: 10
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                            }
+                            Button {
+                                text: I18n.t("paths.change")
+                                implicitHeight: 24
+                                implicitWidth: 64
+                                enabled: !pathRow.model.envForced
+                                onClicked: {
+                                    pathEditDialog.targetKey = pathRow.model.key
+                                    pathEditDialog.targetDesc = pathRow.model.desc
+                                    pathEditDialog.oldPath = pathRow.model.path
+                                    pathEditDialog.newPath = pathRow.model.path
+                                    pathEditDialog.open()
+                                }
+                                background: Rectangle {
+                                    radius: 6
+                                    color: !parent.enabled ? cPanel
+                                         : (parent.hovered ? cAccent : cAccentDark)
+                                    border.color: parent.enabled ? cAccent : cLine
+                                }
+                                contentItem: Label {
+                                    text: parent.text
+                                    color: parent.enabled
+                                         ? (parent.hovered ? cOnColor : cText)
+                                         : cTextDim
+                                    font.pixelSize: 10
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                            }
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: pathRow.model.envForced
+                                  ? I18n.t("paths.envForcedHint")
+                                  : pathRow.model.path
+                            color: pathRow.model.envForced ? cOrange : cTextDim
+                            font.pixelSize: 10
+                            elide: Text.ElideMiddle
+                            ToolTip.visible: hovered
+                            ToolTip.text: pathRow.model.path
+                        }
+                    }
+                }
+            }
+
+            Label {
+                Layout.fillWidth: true
+                visible: pathsDialog.restartNote.length > 0
+                text: "⚠ " + pathsDialog.restartNote
+                color: cOrange
+                font.pixelSize: 11
+                wrapMode: Text.WordWrap
+            }
+
+            Label {
+                Layout.fillWidth: true
+                text: I18n.t("paths.settingsFile") + "：" + backend.settingsFilePath()
+                color: cTextDim
+                font.pixelSize: 10
+                elide: Text.ElideMiddle
+            }
+        }
+
+        footer: RowLayout {
+            spacing: 8
+            anchors.margins: 18
+            Label {
+                Layout.fillWidth: true
+                text: I18n.t("paths.footerHint")
+                color: cTextDim
+                font.pixelSize: 10
+                wrapMode: Text.WordWrap
+            }
+            Button {
+                text: I18n.t("btn.close")
+                implicitHeight: 28
+                implicitWidth: 72
+                onClicked: pathsDialog.close()
+                background: Rectangle {
+                    radius: 6
+                    color: parent.hovered ? cAccentDark : cPanel2
+                    border.color: cLine
+                }
+                contentItem: Label {
+                    text: parent.text
+                    color: parent.hovered ? cOnColor : cText
+                    font.pixelSize: 11
+                }
+            }
+        }
+
+        Connections {
+            target: backend
+            function onRestartRequired(msg) {
+                pathsDialog.restartNote = msg + " — " + I18n.t("paths.restartHint")
+                pathsDialog.reload()
+            }
+        }
+    }
+
+    // ---------- 单条路径编辑（含迁移确认） ----------
+    Dialog {
+        id: pathEditDialog
+        objectName: "pathEditDialog"
+        modal: true
+        anchors.centerIn: parent
+        width: 560
+        padding: 0
+
+        property string targetKey: ""
+        property string targetDesc: ""
+        property string oldPath: ""
+        property string newPath: ""
+        property bool migrate: true
+        property string preview: ""
+
+        function refreshPreview() {
+            if (newPath.length === 0) {
+                preview = I18n.t("paths.resetPreview")
+                return
+            }
+            var r = backend.previewPathMove(targetKey, newPath)
+            preview = r.msg
+        }
+        onNewPathChanged: if (visible) refreshPreview()
+        onOpened: { migrate = true; refreshPreview() }
+
+        background: Rectangle {
+            radius: 12
+            color: cPanel
+            border.color: cLine
+            border.width: 1
+        }
+
+        header: Label {
+            text: I18n.t("paths.editTitle", pathEditDialog.targetDesc)
+            color: cText
+            font.pixelSize: 14
+            font.bold: true
+            leftPadding: 18
+            topPadding: 14
+            elide: Text.ElideRight
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 8
+            anchors.margins: 18
+
+            Label {
+                Layout.fillWidth: true
+                text: I18n.t("paths.current") + "：" + pathEditDialog.oldPath
+                color: cTextDim
+                font.pixelSize: 10
+                elide: Text.ElideMiddle
+            }
+
+            RowLayout {
+                spacing: 6
+                TextField {
+                    id: newPathField
+                    Layout.fillWidth: true
+                    text: pathEditDialog.newPath
+                    placeholderText: I18n.t("paths.newPlaceholder")
+                    color: cText
+                    placeholderTextColor: cTextDim
+                    selectByMouse: true
+                    onTextChanged: pathEditDialog.newPath = text
+                    background: Rectangle {
+                        radius: 6
+                        color: cBg
+                        border.color: newPathField.activeFocus ? cAccent : cLine
+                        border.width: newPathField.activeFocus ? 2 : 1
+                    }
+                }
+                Button {
+                    text: I18n.t("paths.browse")
+                    implicitHeight: 30
+                    onClicked: pickDirDialog.open()
+                    background: Rectangle {
+                        radius: 6
+                        color: parent.hovered ? cAccentDark : cPanel2
+                        border.color: cLine
+                    }
+                    contentItem: Label {
+                        text: parent.text
+                        color: parent.hovered ? cOnColor : cText
+                        font.pixelSize: 11
+                    }
+                }
+            }
+
+            CheckBox {
+                id: migrateBox
+                text: I18n.t("paths.doMigrate")
+                checked: pathEditDialog.migrate
+                onToggled: pathEditDialog.migrate = checked
+                contentItem: Label {
+                    text: migrateBox.text
+                    color: cText
+                    font.pixelSize: 11
+                    leftPadding: migrateBox.indicator.width + 6
+                    verticalAlignment: Text.AlignVCenter
+                }
+            }
+
+            Label {
+                Layout.fillWidth: true
+                text: pathEditDialog.migrate ? ("↪ " + pathEditDialog.preview)
+                                             : I18n.t("paths.noMigrateHint")
+                color: cTextDim
+                font.pixelSize: 10
+                wrapMode: Text.WordWrap
+            }
+
+            Label {
+                Layout.fillWidth: true
+                text: "⚠ " + I18n.t("paths.restartHint")
+                color: cOrange
+                font.pixelSize: 10
+                wrapMode: Text.WordWrap
+            }
+        }
+
+        footer: RowLayout {
+            spacing: 8
+            anchors.margins: 18
+            Item { Layout.fillWidth: true }
+            Button {
+                text: I18n.t("btn.cancel")
+                implicitHeight: 28
+                implicitWidth: 72
+                onClicked: pathEditDialog.close()
+                background: Rectangle {
+                    radius: 6
+                    color: parent.hovered ? cRed : cPanel2
+                    border.color: cLine
+                }
+                contentItem: Label {
+                    text: parent.text
+                    color: parent.hovered ? cOnColor : cTextDim
+                    font.pixelSize: 11
+                }
+            }
+            Button {
+                text: I18n.t("btn.apply")
+                implicitHeight: 28
+                implicitWidth: 72
+                onClicked: {
+                    var r = backend.setPath(pathEditDialog.targetKey,
+                                            newPathField.text, migrateBox.checked)
+                    showStatus(r.msg)
+                    if (r.ok) {
+                        pathsDialog.reload()
+                        pathEditDialog.close()
+                    }
+                }
+                background: Rectangle {
+                    radius: 6
+                    color: parent.hovered ? cAccent : Theme.applyBg
+                    border.color: cAccent
+                }
+                contentItem: Label {
+                    text: parent.text
+                    color: parent.hovered ? cOnColor : cText
+                    font.pixelSize: 11
+                }
+            }
+        }
+    }
+
+    // 目录选择器（folder: true 才是选目录）
+    FolderDialog {
+        id: pickDirDialog
+        title: I18n.t("paths.browse")
+        onAccepted: {
+            pathEditDialog.newPath = urlToPath(pickDirDialog.selectedFolder)
+            newPathField.text = pathEditDialog.newPath
+        }
+    }
+
+    // ---------- 快捷键一览 ----------
+    Dialog {
+        id: shortcutsDialog
+        objectName: "shortcutsDialog"
+        modal: true
+        anchors.centerIn: parent
+        width: 520
+        height: Math.min(560, root.height - 120)
+        padding: 0
+
+        background: Rectangle {
+            radius: 12
+            color: cPanel
+            border.color: cLine
+            border.width: 1
+        }
+
+        header: Label {
+            text: I18n.t("sc.title")
+            color: cText
+            font.pixelSize: 15
+            font.bold: true
+            leftPadding: 18
+            topPadding: 14
+        }
+
+        contentItem: ScrollView {
+            clip: true
+            anchors.margins: 18
+
+            ColumnLayout {
+                width: shortcutsDialog.width - 60
+                spacing: 5
+
+                Repeater {
+                    model: [
+                        { k: "Space",        d: I18n.t("sc.playPause") },
+                        { k: "Ctrl+P",       d: I18n.t("sc.playPause") },
+                        { k: "Ctrl+Left/Right", d: I18n.t("sc.seek") },
+                        { k: "Ctrl+F",       d: I18n.t("sc.focusSearch") },
+                        { k: "Ctrl+Shift+F", d: I18n.t("sc.focusScan") },
+                        { k: "Esc",          d: I18n.t("sc.stopAndFocus") },
+                        { k: "Ctrl+1/2/3",   d: I18n.t("sc.sideTabs") },
+                        { k: "↑ / ↓",        d: I18n.t("sc.moveRow") },
+                        { k: "Enter",        d: I18n.t("sc.playRow") },
+                        { k: "F",            d: I18n.t("sc.favRow") },
+                        { k: "S",            d: I18n.t("sc.similarRow") },
+                        { k: "Enter（改标弹窗）", d: I18n.t("sc.applyCat") },
+                        { k: "双击分隔条",     d: I18n.t("sc.resetSidebar") }
+                    ]
+                    delegate: RowLayout {
+                        required property var modelData
+                        width: shortcutsDialog.width - 60
+                        spacing: 12
+                        Label {
+                            text: modelData.k
+                            color: cAccent
+                            font.pixelSize: 12
+                            font.family: "Consolas"
+                            Layout.preferredWidth: 170
+                        }
+                        Label {
+                            text: modelData.d
+                            color: cText
+                            font.pixelSize: 12
+                            Layout.fillWidth: true
+                        }
+                    }
+                }
+            }
+        }
+
+        footer: RowLayout {
+            spacing: 8
+            anchors.margins: 18
+            Item { Layout.fillWidth: true }
+            Button {
+                text: I18n.t("sc.close")
+                implicitHeight: 28
+                implicitWidth: 72
+                onClicked: shortcutsDialog.close()
+                background: Rectangle {
+                    radius: 6
+                    color: parent.hovered ? cAccentDark : cPanel2
+                    border.color: cLine
+                }
+                contentItem: Label {
+                    text: parent.text
+                    color: parent.hovered ? cOnColor : cText
+                    font.pixelSize: 11
+                }
+            }
+        }
+    }
+
+    // ---------- 关于 ----------
+    Dialog {
+        id: aboutDialog
+        objectName: "aboutDialog"
+        modal: true
+        anchors.centerIn: parent
+        width: 460
+        padding: 0
+
+        background: Rectangle {
+            radius: 12
+            color: cPanel
+            border.color: cLine
+            border.width: 1
+        }
+
+        header: Label {
+            text: I18n.t("menu.about")
+            color: cText
+            font.pixelSize: 15
+            font.bold: true
+            leftPadding: 18
+            topPadding: 14
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 10
+            anchors.margins: 18
+
+            Label {
+                Layout.fillWidth: true
+                text: I18n.t("about.text")
+                color: cText
+                font.pixelSize: 12
+                lineHeight: 1.5
+                wrapMode: Text.WordWrap
+            }
+            Label {
+                Layout.fillWidth: true
+                text: I18n.t("about.version", backend.appVersion())
+                color: cTextDim
+                font.pixelSize: 10
+            }
+            Label {
+                Layout.fillWidth: true
+                text: I18n.t("about.dataAt") + "：" + backend.pathInfo()[0].path
+                color: cTextDim
+                font.pixelSize: 10
+                elide: Text.ElideMiddle
+            }
+        }
+
+        footer: RowLayout {
+            spacing: 8
+            anchors.margins: 18
+            Item { Layout.fillWidth: true }
+            Button {
+                text: I18n.t("about.ok")
+                implicitHeight: 28
+                implicitWidth: 72
+                onClicked: aboutDialog.close()
+                background: Rectangle {
+                    radius: 6
+                    color: parent.hovered ? cAccent : Theme.applyBg
+                    border.color: cAccent
+                }
+                contentItem: Label {
+                    text: parent.text
+                    color: parent.hovered ? cOnColor : cText
+                    font.pixelSize: 11
                 }
             }
         }
@@ -1742,13 +2591,13 @@ ApplicationWindow {
         id: dragHint
         anchors.fill: parent
         visible: false
-        color: "#8010131a"
+        color: Theme.overlay
         z: 9000
         border.color: cAccent
         border.width: 3
         Text {
             anchors.centerIn: parent
-            text: "松开以「以声搜声」\nDrop to search by sound"
+            text: I18n.t("drop.hint")
             horizontalAlignment: Text.AlignHCenter
             color: cText
             font.pixelSize: 22
@@ -1758,7 +2607,7 @@ ApplicationWindow {
     // ---------- 收藏导入文件选择 ----------
     FileDialog {
         id: importFavDialog
-        title: "导入收藏（Import favorites）"
+        title: I18n.t("fav.importTitle")
         nameFilters: ["收藏文件（Favorites） (*.md *.csv *.m3u *.txt)", "所有文件（All files） (*.*)"]
         onAccepted: root.chooseImportFile(importFavDialog.selectedFile)
     }

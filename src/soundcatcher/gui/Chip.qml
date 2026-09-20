@@ -1,14 +1,18 @@
 import QtQuick
 import QtQuick.Controls
+import "."
 
 // 小标签：tone = dim | accent | green
+// 配色全部走 Theme，禁止硬编码 —— 否则亮色主题下会保持暗色底而不可读
 Rectangle {
     id: chip
     property string text: ""
     property string tone: "dim"
     property real maxWidth: 180
-    property color bkg: tone === "green" ? "#2f4538" : (tone === "accent" ? "#3a4a6b" : "#2f323c")
-    property color fgc: tone === "green" ? "#9ece6a" : (tone === "accent" ? "#a8c0f8" : "#8d93a1")
+    property color bkg: tone === "green" ? Theme.chipGreenBg
+                      : (tone === "accent" ? Theme.chipAccentBg : Theme.chipDimBg)
+    property color fgc: tone === "green" ? Theme.green
+                      : (tone === "accent" ? Theme.accent : Theme.textDim)
     height: 20
     radius: 4
     color: bkg

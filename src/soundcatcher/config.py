@@ -5,6 +5,11 @@
 1. 环境变量 ``SOUNDCATCHER_HOME``
 2. 默认：项目根目录（开发期）
 
+数据目录（``data_dir``）优先级：
+
+1. 环境变量 ``SOUNDCATCHER_DATA_HOME``（GUI 设置面板写入）
+2. ``<home>/data``
+
 模型根目录（``models_dir``）优先级：
 
 1. 环境变量 ``SOUNDCATCHER_MODELS``（显式指定，便携/多库共存用）
@@ -12,16 +17,28 @@
    置于工程目录 ``Sound-library/`` 下，与代码仓分离，避免 1GB 二进制污染 git 仓）
 3. 仓内 ``<home>/models``（历史布局，兼容旧环境）
 
+UCS 静态语料目录（``catalog_dir``）优先级：
+
+1. 环境变量 ``SOUNDCATCHER_CATALOG``（GUI 设置面板写入）
+2. ``<home>/catalog``（工程默认）
+
 ``home`` 下布局：
 
-- ``data/library.db``    SQLite 元数据
-- ``data/index/``        faiss 向量索引
-- ``catalog/``           UCS 静态语料（官方全表 + 中文侧）
+- ``catalog/``           UCS 静态语料（官方全表 + 中文侧，只读「原料」）
+
+``data_dir`` 下布局：
+
+- ``library.db``    SQLite 元数据
+- ``index/``        faiss 向量索引
+- ``ucs/``          UCS 派生数据（原型矩阵 + 条目元数据，可重建）
 
 ``models_dir`` 下布局（位于 ``Sound-library/models/``）：
 
 - ``onnx_audio_model.onnx`` / ``onnx_text_model.onnx``  CLAP 双塔
 - ``opus-mt-zh-en/``                                    中→英翻译桥
+
+**注意**：``data_dir`` / ``catalog_dir`` 都会读环境变量（GUI 设置面板通过写
+``SOUNDCATCHER_*`` 生效），因此属性是**动态**的 —— 不要缓存到模块级常量。
 """
 
 from __future__ import annotations
@@ -32,6 +49,7 @@ from pathlib import Path
 
 ENV_HOME = "SOUNDCATCHER_HOME"
 ENV_MODELS = "SOUNDCATCHER_MODELS"
+ENV_CATALOG = "SOUNDCATCHER_CATALOG"
 
 
 def _resolve_models_dir(home: Path) -> Path:
@@ -45,6 +63,19 @@ def _resolve_models_dir(home: Path) -> Path:
         return sibling
     # 历史布局：models 在仓内
     return home / "models"
+
+
+def _resolve_catalog_dir(home: Path) -> Path:
+    """解析 UCS 静态语料目录（753 类官方字典）。
+
+    优先级：``SOUNDCATCHER_CATALOG`` > ``<home>/catalog``（工程默认）。
+    注意：语料**不在 ``data/`` 下** —— 它是只读「原料」而非派生产物，
+    留在 default 位置可保证「删掉 data/ 即可完全重置」的语义不被破坏。
+    """
+    env = os.environ.get(ENV_CATALOG)
+    if env:
+        return Path(env).expanduser().resolve()
+    return home / "catalog"
 
 
 @dataclass
@@ -70,12 +101,19 @@ class Config:
 
     @property
     def data_dir(self) -> Path:
+        """数据目录：可用 ``SOUNDCATCHER_DATA_HOME`` 覆盖（GUI 设置面板写入该变量）。"""
+        env = os.environ.get("SOUNDCATCHER_DATA_HOME")
+        if env:
+            return Path(env).expanduser().resolve()
         return self.home / "data"
 
     @property
     def catalog_dir(self) -> Path:
-        """UCS 静态语料（官方全表 + 中文侧），随应用分发。"""
-        return self.home / "catalog"
+        """UCS 静态语料（官方全表 + 中文侧），随应用分发。
+
+        可用 ``SOUNDCATCHER_CATALOG`` 覆盖（GUI 设置面板）；**默认不在 data/ 下**。
+        """
+        return _resolve_catalog_dir(self.home)
 
     @property
     def ucs_dir(self) -> Path:
