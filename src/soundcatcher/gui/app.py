@@ -17,7 +17,9 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QLockFile, QUrl
+from PySide6.QtGui import QIcon
 from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from .fonts import apply_ui_font, register_bundled_fonts
@@ -27,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 GUI_DIR = Path(__file__).resolve().parent
 QML_FILE = GUI_DIR / "main.qml"
+ICON_FILE = GUI_DIR / "assets" / "icon.ico"
 
 
 def _bootstrap_settings() -> Settings:
@@ -40,9 +43,23 @@ def main(argv: list[str] | None = None) -> int:
     # ① 偏好先落地：路径偏好靠环境变量生效，晚于 backend 构造就白设了
     _bootstrap_settings()
 
+    # ② Controls 样式必须是 Basic（或 Fusion/Material 等非原生样式）。
+    #    原因：界面里满屏自定义 Button/CheckBox 的 background / contentItem /
+    #    indicator，而默认样式在 Windows 上走原生（windowsvista）**禁止**这类定制，
+    #    会在 QML 里刷几十条 "The current style does not support customization"
+    #    告警、并把自定义背景整个吞掉（视觉上就是按钮没样式）。必须在
+    #    QApplication 之前设置。
+    QQuickStyle.setStyle("Basic")
+
     app = QApplication(sys.argv if argv is None else argv)
     app.setApplicationName("SoundCatcher")
     app.setApplicationDisplayName("SoundCatcher")
+    # ③ 应用图标：任务栏/窗口/Alt+Tab 都用它。资源缺失不算致命（打包时可能漏拷），
+    #    所以只记日志不抛异常。
+    if ICON_FILE.exists():
+        app.setWindowIcon(QIcon(str(ICON_FILE)))
+    else:
+        logger.warning("图标缺失（scripts/make_icon.py 可重新生成）：%s", ICON_FILE)
 
     # ② 界面字体：显式选一个含 CJK 字形的族，否则 offscreen/精简环境中文会渲染成方框
     register_bundled_fonts()

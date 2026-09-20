@@ -41,6 +41,9 @@ ApplicationWindow {
     property int libFailed: 0
     property string statusNote: ""
     property string ucsHint: ""
+    property int hitCount: 0            // 上次查询命中数（结果区标题显示）
+    property string lastLatencyMs: ""   // 上次查询耗时 ms（空 = 未查过）
+    property string translationHint: "" // 「中文 → 英文」提示（不覆盖 statusNote）
     property var favPaths: []          // 已收藏的路径列表（收藏按钮状态用）
     property var savedList: []         // 已保存搜索（持久）
     property var catalogList: []       // UCS 扁平 753 类（改标弹窗用）
@@ -176,6 +179,15 @@ ApplicationWindow {
     }
     property var probeResult: ({})
 
+    // 分类搜索探针：同上，无参中转。probeQuery 先写入，再调 probeFilterCats()，
+    // 命中数回填 probeHitCount。用于验证改标弹窗的搜索式分类选择器。
+    property string probeQuery: ""
+    property int probeHitCount: 0
+    function probeFilterCats() {
+        filterCats(probeQuery)
+        probeHitCount = catModel.count
+    }
+
     function currentMode() {
         if (modeSemantic.checked) return "semantic"
         if (modeKeyword.checked) return "keyword"
@@ -186,6 +198,9 @@ ApplicationWindow {
         var q = searchField.text.trim()
         if (q.length === 0) return
         resultsModel.clear()
+        hitCount = 0
+        lastLatencyMs = ""
+        translationHint = ""     // 换新查询就清掉上一条的附注，避免张冠李戴
         backend.doSearch(q, currentMode(), 60)
         addHistory(q, currentMode())
     }
@@ -212,6 +227,7 @@ ApplicationWindow {
         function onSearchFinished(items) {
             resultsModel.clear()
             for (var i = 0; i < items.length; i++) resultsModel.append(items[i])
+            hitCount = items.length
             statusNote = I18n.t("status.hit", items.length)
             emptyText.text = items.length === 0 ? I18n.t("results.noHit") : ""
         }
@@ -220,13 +236,15 @@ ApplicationWindow {
             emptyText.text = msg
         }
         function onTranslationNote(note) {
-            statusNote = note
+            // 只做「中文 → 英文」的附带提示：状态栏的主语义是「上次查询结果」，
+            // 直接覆盖会把命中数顶掉。这里单独走一个小角标。
+            translationHint = note
         }
         function onStatsChanged(total, embedded, failed) {
             libTotal = total; libEmbedded = embedded; libFailed = failed
         }
         function onQueryLatency(sec) {
-            statusNote = I18n.t("status.latency", (sec * 1000).toFixed(1))
+            lastLatencyMs = (sec * 1000).toFixed(1)
         }
         function onWaveformReady(fileId, peaks) {
             waveCanvas.peaks = peaks
@@ -1128,7 +1146,7 @@ ApplicationWindow {
                                     }
                                     Item { Layout.fillWidth: true }
                                     Label {
-                                        text: savedModel.count + " 条"
+                                        text: I18n.t("saved.count", savedModel.count)
                                         color: cTextDim
                                         font.pixelSize: 10
                                     }
@@ -1459,10 +1477,13 @@ ApplicationWindow {
                     // 105px（树只剩 3 行可见），而空白 Item 白占几百像素（2026-09-20 修）。
 
                     // 状态小字
+                    // 优先级：搜索中提示 > 本次查询的「中文 → 英文」附注 > 常规状态
                     Label {
                         Layout.fillWidth: true
                         text: {
                             if (backend.searching) return I18n.t("status.searching")
+                            if (root.translationHint !== "")
+                                return I18n.t("status.translated", root.translationHint)
                             return root.statusNote
                         }
                         color: backend.searching ? cOrange : cTextDim
@@ -1494,6 +1515,16 @@ ApplicationWindow {
                             color: cTextDim
                             font.pixelSize: 12
                             font.bold: true
+                        }
+                        // 命中条数 + 上次查询耗时（之前只算了不显示，白白浪费）
+                        Label {
+                            id: resultCount
+                            visible: root.hitCount > 0
+                            text: I18n.t("results.hit", root.hitCount)
+                                  + (root.lastLatencyMs === ""
+                                     ? "" : "  ·  " + I18n.t("status.latency", root.lastLatencyMs))
+                            color: cTextDim
+                            font.pixelSize: 11
                         }
                         Item { Layout.fillWidth: true }
                         BusyIndicator {

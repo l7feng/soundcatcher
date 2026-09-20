@@ -1,0 +1,71 @@
+fix(gui): 修 QML 静默失效（属性名被顶 / 控件样式 / 文案漏翻）+ 应用图标
+
+本轮是把 GUI 从「看着能跑」推到「启动零告警」的一轮，同时补上桌面快捷方式的图标。
+
+## 一、修了一个静默失效的真 bug（backend.searching 一直是 undefined）
+
+`AppBackend` 里 `searching = Property(...)` 与类中已有的同名 `@property`
+冲突，PySide6 把 Qt 属性注册成了**变量名** `searching_prop`。于是 QML 里
+`backend.searching` 永远是 undefined —— 后果是搜索忙碌指示器不转、状态栏
+不切「搜索中」，而**只在 QML 加载时飘一条
+`Unable to assign [undefined] to bool` 就算过去了**，不盯着看根本发现不了。
+
+- `searching = Property(bool, getSearching, setSearching, ...)`
+- `currentFile = Property("QVariant", getCurrentFile, ...)`（同一坑，原为 `currentFileProp`）
+
+## 二、控件样式：显式设 Basic，否则自定义背景被吞
+
+`QQuickStyle.setStyle("Basic")`（必须早于 QApplication 构造）。默认样式在
+Windows 走原生（windowsvista）**禁止**定制 `background`/`contentItem`/
+`indicator`，实测刷 27 条告警并把自定义按钮背景整个吞掉。
+
+## 三、顺手修掉的 3 个「算了不显示」类问题
+
+- `results.hit` 文案里写着「· 延迟已记录」但**命中数与耗时从来没显示过**：
+  现在结果区标题右侧真显示「命中 N 条 · 查询耗时 X ms」
+- `onQueryLatency` 直接覆写 `statusNote`，把刚设好的命中数顶掉：改为独立
+  `lastLatencyMs` 状态，不再互相踩
+- `onTranslationNote` 同样覆写 `statusNote`：改为独立 `translationHint`，
+  按「搜索中 > 中→英附注 > 常规状态」优先级展示
+
+## 四、i18n 收口
+
+- 删 5 个死 key（`tab.*` ×3 已有 `side.*` 替代、`fav.filter*` ×2 无引用），
+  并把两处与 `side.*` 重复的定义合并
+- `savedModel.count + " 条"` → `I18n.t("saved.count", ...)`（硬编码漏翻）
+- 中英两表 132 key 完全对齐、无重复
+
+## 五、应用图标（桌面快捷方式之前是 pythonw 默认图标）
+
+- 新增 `scripts/make_icon.py`：Qt 自绘 + 手写 ICO 容器，**零新增依赖**
+  （不为此引 Pillow）。产出 7 档尺寸 16/24/32/48/64/128/256，实测 Qt 全部
+  正常解析。图形＝声波柱 + 放大镜（SoundCatcher 语义）
+- `scripts/make_shortcut.py` 图标路径修正为包内 `gui/assets/icon.ico`
+  （原来指向不存在的 `assets/icon.ico`，所以一直没生效）
+- `app.py` 加 `setWindowIcon`（资源缺失只记日志，不算致命）
+
+## 六、测试：把「靠肉眼发现」变成「能拦住」
+
+- **新增 `tests/test_backend_contract.py`**：QML 里每个 `backend.<name>` 都
+  必须真存在于元对象；并**专门守护 Property 被同名属性遮蔽**这一根因。
+  顺带校 I18n key 覆盖、Theme token 覆盖、`property alias` 不得指向单例
+- **新增 `tests/test_i18n_coverage.py`**：扫界面文案位置里绕过 i18n 的
+  硬编码中文（白名单 1 项：语言菜单的「中文」必须永远显示中文）
+- `tests/probe_qml_load.py`：注入 backend（否则一屏 `backend is not defined`
+  噪声淹没真错）、按 Basic 样式跑、告警分类去重统计
+- **两个探针改为结果落盘 `tests/_*.log`**：本机沙箱里 Qt 脚本 stdout 会被
+  偶发吞掉（进程正常结束但 shell 收不到，还误报 `RC=127`），一律「看日志
+  不信退出码」。`.gitignore` 加 `tests/_*.log`
+
+## 验证
+
+| 套件 | 结果 |
+|---|---|
+| probe_qml_load | **QML LOAD CLEAN**（首次零告警，此前 27 样式 + 46 ReferenceError + 11 Connections） |
+| test_backend_contract | BACKEND CONTRACT OK |
+| test_i18n_coverage | I18N COVERAGE OK |
+| theme_probe | THEME PROBE OK（31 断言 / 0 FAIL） |
+| test_settings_migrate | MIGRATE TEST OK |
+| smoke_launch | LAUNCH OK（app.main() rc=0） |
+
+真实库未被触碰：files 108510 / ucs_labels 324483 / tags 504900 / integrity ok

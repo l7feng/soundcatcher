@@ -25,7 +25,9 @@ from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[1]
 SHORTCUT_NAME = "SoundCatcher.lnk"
-ICON = PROJECT / "assets" / "icon.ico"
+# 图标放在包内（src/soundcatcher/gui/assets/），跟 app.py 的 ICON_FILE 保持一致，
+# 这样源码运行和打包后（资源随包走）都能找到。
+ICON = PROJECT / "src" / "soundcatcher" / "gui" / "assets" / "icon.ico"
 
 
 def desktop_dir() -> Path:

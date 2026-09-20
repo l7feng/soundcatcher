@@ -942,7 +942,14 @@ class AppBackend(QObject):
     def getSearching(self) -> bool:
         return self._searching
 
-    searching_prop = Property(bool, getSearching, setSearching, notify=searchingChanged)
+    # 给 Qt 属性起名 "searching"。
+    # **坑**：不能写成 `searching = Property(...)` —— 上面（第 746 行附近）已有一个
+    # 同名 `@property`，后写的会覆盖它，于是元对象里注册出来的名字变成变量名
+    # `searching_prop`。QML 里 `backend.searching` 就永远取到 undefined（静默失效：
+    # 搜索忙碌指示器不转、状态文案不切，且只在加载时报一条 "Unable to assign
+    # [undefined] to bool"）。此属性覆盖后，C++ 侧 getter/setter 都走上面的
+    # getSearching/setSearching，行为不变。
+    searching = Property(bool, getSearching, setSearching, notify=searchingChanged)
 
     @property
     def currentFile(self) -> dict | None:
@@ -951,7 +958,9 @@ class AppBackend(QObject):
     def getCurrentFile(self) -> dict | None:
         return self._current_file
 
-    currentFileProp = Property("QVariant", getCurrentFile, notify=currentFileChanged)
+    # 同 searching 的坑：这个类上面已有 `currentFile` 的 @property，
+    # 属性名必须显式写成 "currentFile" 才不会被顶成 `currentFileProp`。
+    currentFile = Property("QVariant", getCurrentFile, notify=currentFileChanged)
 
     isPlaying = Property(bool, lambda self: self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState, notify=playStateChanged)
 
