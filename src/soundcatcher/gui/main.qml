@@ -123,6 +123,19 @@ ApplicationWindow {
         backend.doSimilar(resultsModel.get(resultView.currentIndex).path, 60)
     }
 
+    // -------- UCS 分类树：展开 / 折叠全部 --------
+    // 打开时默认展开前 3 个分类（原先），现提供全展开入口 —— 82 个根手动点开太费事
+    function expandAllUcs() {
+        var n = backend.ucsModelCount
+        for (var r = 0; r < n; r++) ucsTreeView.expand(ucsTreeView.index(r, 0))
+        statusNote = "已展开全部 " + n + " 个 UCS 分类"
+    }
+    function collapseAllUcs() {
+        var n = backend.ucsModelCount
+        for (var r = 0; r < n; r++) ucsTreeView.collapse(ucsTreeView.index(r, 0))
+        statusNote = "已折叠全部分类"
+    }
+
     function currentMode() {
         if (modeSemantic.checked) return "semantic"
         if (modeKeyword.checked) return "keyword"
@@ -181,11 +194,12 @@ ApplicationWindow {
         function onUcsTreeChanged() {
             ucsHint = backend.ucsModelCount === 0
                 ? "未找到 UCS 语料（data/ucs/catalog.json）— 先运行 soundcatcher ucs init"
-                : "Click（点击）叶子分类浏览 · · 计数随 ucs tag 推进"
+                : "点击叶子分类浏览 · 计数随 ucs tag 推进"
             // 打开时展开前 3 个分类，方便第一眼看到结构
+            // 注意：Qt 6.11 TreeView 用 index(row, column)，modelIndex() 已废弃
             var n = Math.min(3, backend.ucsModelCount)
             for (var r = 0; r < n; r++) {
-                ucsTreeView.expand(ucsTreeView.modelIndex(r, 0))
+                ucsTreeView.expand(ucsTreeView.index(r, 0))
             }
         }
         function onBrowseFinished(items) {
@@ -451,7 +465,8 @@ ApplicationWindow {
 
             // ---------- 左侧栏 ----------
             Rectangle {
-                Layout.preferredWidth: 264
+                Layout.preferredWidth: 320
+                Layout.minimumWidth: 300
                 Layout.fillHeight: true
                 color: cPanel
                 border.color: cLine
@@ -671,19 +686,61 @@ ApplicationWindow {
                                 spacing: 5
 
                                 RowLayout {
-                                    spacing: 6
+                                    spacing: 4
                                     Label {
-                                        text: "UCS Tree（分类树）"
+                                        text: "UCS 分类树"
                                         color: cTextDim
                                         font.pixelSize: 11
                                         font.bold: true
                                     }
                                     Item { Layout.fillWidth: true }
                                     Button {
-                                        text: "Refresh（刷新）"
+                                        text: "展开"
                                         implicitHeight: 22
-                                        implicitWidth: 76
+                                        implicitWidth: 40
+                                        onClicked: root.expandAllUcs()
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: "展开全部 UCS 分类（Expand all）"
+                                        background: Rectangle {
+                                            radius: 6
+                                            color: parent.hovered ? cAccentDark : cPanel2
+                                            border.color: cLine
+                                        }
+                                        contentItem: Label {
+                                            text: parent.text
+                                            color: parent.hovered ? "#10131a" : cTextDim
+                                            font.pixelSize: 10
+                                            horizontalAlignment: Text.AlignHCenter
+                                            verticalAlignment: Text.AlignVCenter
+                                        }
+                                    }
+                                    Button {
+                                        text: "折叠"
+                                        implicitHeight: 22
+                                        implicitWidth: 40
+                                        onClicked: root.collapseAllUcs()
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: "折叠全部分类（Collapse all）"
+                                        background: Rectangle {
+                                            radius: 6
+                                            color: parent.hovered ? cAccentDark : cPanel2
+                                            border.color: cLine
+                                        }
+                                        contentItem: Label {
+                                            text: parent.text
+                                            color: parent.hovered ? "#10131a" : cTextDim
+                                            font.pixelSize: 10
+                                            horizontalAlignment: Text.AlignHCenter
+                                            verticalAlignment: Text.AlignVCenter
+                                        }
+                                    }
+                                    Button {
+                                        text: "刷新"
+                                        implicitHeight: 22
+                                        implicitWidth: 40
                                         onClicked: backend.refreshUcsTree()
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: "重新加载分类与计数（Refresh）"
                                         background: Rectangle {
                                             radius: 6
                                             color: parent.hovered ? cAccentDark : cPanel2
@@ -708,6 +765,7 @@ ApplicationWindow {
 
                                 TreeView {
                                     id: ucsTreeView
+                                    objectName: "ucsTreeView"
                                     Layout.fillWidth: true
                                     Layout.fillHeight: true
                                     clip: true
@@ -721,23 +779,33 @@ ApplicationWindow {
                                         implicitHeight: 26
                                         implicitWidth: ucsTreeView.width
                                         text: (td.cnt > 0 ? td.cnt + " · " : "") + td.tit
+                                        // 截断兜底：名称被 ElideRight 截掉时，悬停可读全名
+                                        ToolTip.visible: hovered && truncated
+                                        ToolTip.text: td.text
                                         // 暗色主题：默认文字色为深色，在深底上不可见 → 必须显式指定
                                         // 叶子（753 子类）用主文字色，分类用强调色区分层级
                                         contentItem: Label {
+                                            id: tdLabel
                                             text: td.text
                                             color: td.isleaf ? cText : cAccent
                                             font.pixelSize: 11
                                             font.bold: !td.isleaf
                                             elide: Text.ElideRight
                                             verticalAlignment: Text.AlignVCenter
-                                            leftPadding: td.depth * 14 + 4
+                                            leftPadding: td.depth * 11 + 4
+                                            readonly property bool truncated:
+                                                tdLabel.implicitWidth > tdLabel.width
                                         }
                                         background: Rectangle {
                                             color: td.hovered ? cRowHover : "transparent"
                                             radius: 4
                                         }
+                                        // Qt 6.11 的 TreeView 基于 TableView，**没有 currentIndex**，
+                                        // 只有 currentRow / currentColumn。原写 currentIndex 会抛
+                                        // `Cannot assign to non-existent property "currentIndex"`，
+                                        // 使整个 onClicked 处理器失效 → 点叶子不触发 browseUcs（2026-09-20 修正）
                                         onClicked: {
-                                            ucsTreeView.currentIndex = index
+                                            ucsTreeView.currentRow = td.row
                                             if (isleaf) backend.browseUcs(catid)
                                         }
                                     }
@@ -1135,7 +1203,10 @@ ApplicationWindow {
                         }
                     }
 
-                    Item { Layout.fillHeight: true }
+                    // 注意：此处**不能**放 `Item { Layout.fillHeight: true }`。
+                    // 侧栏 ColumnLayout 里 StackLayout 已是 fillHeight 的主要消费者，
+                    // 再插入一个弹性 Item 会与之平分剩余高度 —— 实测把树视口压到仅
+                    // 105px（树只剩 3 行可见），而空白 Item 白占几百像素（2026-09-20 修）。
 
                     // 状态小字
                     Label {
@@ -1147,6 +1218,8 @@ ApplicationWindow {
                         color: backend.searching ? cOrange : cTextDim
                         font.pixelSize: 11
                         wrapMode: Text.WordWrap
+                        Layout.maximumHeight: 48
+                        clip: true
                     }
                 }
             }
