@@ -28,7 +28,8 @@ from soundcatcher.config import Config  # noqa: E402
 SRC_ROOT = Path(r"D:\音效库")
 # 整理区随工程走：仓根 _to_clean/（2026-09-22 起由 App-Project\Sound-library 迁入仓内）
 DST_ROOT = Config.default().home / "_to_clean"
-DEFAULT_JSON = Path(r"C:\Users\Administrator\AppData\Local\Temp\opencode\bad_files.json")
+# 待整理清单的默认落点：随工程走（data/ 已在 .gitignore，属运行态）
+DEFAULT_JSON = Config.default().home / "data" / "bad_files.json"
 
 
 def main() -> int:
