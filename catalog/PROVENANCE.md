@@ -8,7 +8,7 @@
 - **来源**：官方 UCS 资源（https://universalcategorysystem.com 的 "UCS v8.2.1 Full List"），经开源仓库 `jmrsound/ucs-tools`（MIT，仅作格式工具）随仓附带，见其 `src/ucs_tools/data/PROVENANCE.md`。
 - **版本**：8.2.1（列表最终版，2024-01 发布，修正 WOOD-HANDLE → WOODHndl 等）。
 - **许可**：**公共领域**（public domain），自由使用无限制。UCS 由 Tim Nielsen / Justin Drury 等发起。
-- **本机副本**：`D:\Ai-Files\App-Project\Sound-library\Reference\ucs-tools\src\ucs_tools\data\ucs_v8.2.1.csv`（工具版本，可随时重新拷贝覆盖，两者应一致）。
+- **本机副本**：`D:\Ai-Files\GitHub-warehouse\SoundCatcher\Reference\ucs-tools\src\ucs_tools\data\ucs_v8.2.1.csv`（工具版本，可随时重新拷贝覆盖，两者应一致）。
 
 ## `ucs-zh-en.tsv` —— 中文侧（补充，按 CatID 合并）
 

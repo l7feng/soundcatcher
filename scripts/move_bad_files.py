@@ -22,8 +22,12 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from soundcatcher.config import Config  # noqa: E402
+
 SRC_ROOT = Path(r"D:\音效库")
-DST_ROOT = Path(r"D:\Ai-Files\App-Project\Sound-library\_to_clean")
+# 整理区随工程走：仓根 _to_clean/（2026-09-22 起由 App-Project\Sound-library 迁入仓内）
+DST_ROOT = Config.default().home / "_to_clean"
 DEFAULT_JSON = Path(r"C:\Users\Administrator\AppData\Local\Temp\opencode\bad_files.json")
 
 

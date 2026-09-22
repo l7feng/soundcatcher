@@ -16,14 +16,22 @@ data-test/
 
 # 模型文件（≈1GB，不随仓分发）
 #
-# 自 2026-09-19 起 models/ 已移出本仓，位于工程层：
-#   D:\Ai-Files\App-Project\Sound-library\models\
-# 落点由 soundcatcher.config 解析（SOUNDCATCHER_MODELS > 工程层 > 仓内）。
+# 自 2026-09-22 起 models/ 位于本仓内（SoundCatcher\models\），但**不入版本控制**
+# —— 与 data/ 同款处理：「仓文件夹＝项目文件夹」，靠 .gitignore 划界。
+# 落点由 soundcatcher.config 解析（SOUNDCATCHER_MODELS > home.parent/models > home/models）。
 # 获取方式：python scripts/download_models.py
 models/
 **/models/*.onnx
 *.onnx
 *.npy
+
+# 第三方参考资料（只读思路参考；内含独立 git 仓 ucs-tools；不入版本控制）
+# 例外：Reference/PROVENANCE.md 记录三方来源与版本，需入库
+Reference/*
+!Reference/PROVENANCE.md
+
+# 待删文件整理区（坏文件「只移不删」登记区，运行态暂存；不入版本控制）
+_to_clean/
 
 # 一次性调试产物
 _probe_*.json

@@ -13,9 +13,10 @@
 模型根目录（``models_dir``）优先级：
 
 1. 环境变量 ``SOUNDCATCHER_MODELS``（显式指定，便携/多库共存用）
-2. 工程层 ``<home>/../models``（**现行布局**：models 已移出 ``SoundCatcher/``，
-   置于工程目录 ``Sound-library/`` 下，与代码仓分离，避免 1GB 二进制污染 git 仓）
-3. 仓内 ``<home>/models``（历史布局，兼容旧环境）
+2. 工程层 ``<home>/../models``（便携 / 多库共存用；现行不落在此）
+3. 仓内 ``<home>/models``（**现行布局**：2026-09-22 起 models 回到仓内
+   ``SoundCatcher/models/``，由 ``.gitignore`` 排除 —— 与 ``data/`` 同款处理：
+   「仓文件夹＝项目文件夹」，靠 .gitignore 划界，而非把资产挪出仓外）
 
 UCS 静态语料目录（``catalog_dir``）优先级：
 
@@ -32,7 +33,7 @@ UCS 静态语料目录（``catalog_dir``）优先级：
 - ``index/``        faiss 向量索引
 - ``ucs/``          UCS 派生数据（原型矩阵 + 条目元数据，可重建）
 
-``models_dir`` 下布局（位于 ``Sound-library/models/``）：
+``models_dir`` 下布局（现行位于 ``SoundCatcher/models/``）：
 
 - ``onnx_audio_model.onnx`` / ``onnx_text_model.onnx``  CLAP 双塔
 - ``opus-mt-zh-en/``                                    中→英翻译桥
