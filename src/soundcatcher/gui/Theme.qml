@@ -50,7 +50,8 @@ QtObject {
         dangerBg:    "#5a3a44",   // 停止按钮 hover
         applyBg:     "#3a4a6b",   // 确定按钮常态
         relabelHover:"#4a6b5a",   // 改标按钮 hover
-        overlay:     "#8010131a"  // 拖拽遮罩
+        overlay:     "#8010131a", // 拖拽遮罩
+        menuBg:      "#23252d"    // 菜单弹层背景（不黑；与 panel 同档）
     })
 
     // ---------- 亮色板（新增，等结构对照暗色） ----------
@@ -76,7 +77,8 @@ QtObject {
         dangerBg:    "#f2d5d3",
         applyBg:     "#d3ddf3",
         relabelHover:"#d8ecdc",
-        overlay:     "#80f4f5f7"
+        overlay:     "#80f4f5f7",
+        menuBg:      "#ffffff"    // 菜单弹层背景（亮色下纯白）
     })
 
     readonly property var _c: isDark ? _dark : _light
@@ -104,6 +106,7 @@ QtObject {
     readonly property color applyBg:      _c.applyBg
     readonly property color relabelHover: _c.relabelHover
     readonly property color overlay:      _c.overlay
+    readonly property color menuBg:       _c.menuBg
 
     // 当前色板的「暗/亮」中文标签（状态栏提示用）
     readonly property string modeLabel:

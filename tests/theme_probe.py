@@ -85,14 +85,37 @@ def main() -> int:
     def find(oid: str) -> QObject | None:
         return win.findChild(QObject, oid)
 
+    def pump(ms: int = 60) -> None:
+        """跑一小段真实事件循环。
+
+        `processEvents()` 只清队列里**当前已有**的事件；`Qt.callLater` 排的回调
+        需要事件循环再转一圈才执行。这里用一个极短的 QEventLoop 确保 callLater /
+        布局 / 主题收敛回调都跑完（实测 processEvents 单用会让 probeResult 恒为空）。
+        """
+        from PySide6.QtCore import QEventLoop, QTimer  # noqa: PLC0415
+
+        loop = QEventLoop()
+        QTimer.singleShot(ms, loop.quit)
+        loop.exec()
+
     def probe(mode: str, lang: str) -> dict:
-        """经 QML 的无参 probeApply() 驱动切换，再读回 probeResult。"""
+        """经 QML 的三段式无参函数驱动切换，再读回 probeResult。
+
+        `probeApply()`（切主题/语言）→ `probeToggle()`（展开 UCS 树 + 切到该页签）
+        → `probeSample()`（采样并复原）。三段之间必须各泵一轮事件循环：
+        QML 里主题收敛与 StackLayout 重新布局都要等到下一帧，同步连读只会拿到
+        旧几何（树高恒为 0）。
+        """
         win.setProperty("probeArgs", [mode, lang])
         QApplication.processEvents()
         ok = win.metaObject().invokeMethod(win, "probeApply")
-        QApplication.processEvents()
         if not ok:
             return {"_invokeFailed": True}
+        pump(40)
+        win.metaObject().invokeMethod(win, "probeToggle")
+        pump(40)
+        win.metaObject().invokeMethod(win, "probeSample")
+        pump(40)
         # probeResult 是 QJSValue，不是 dict → 用 toVariant() 转成 Python 对象
         v = win.property("probeResult")
         if hasattr(v, "toVariant"):

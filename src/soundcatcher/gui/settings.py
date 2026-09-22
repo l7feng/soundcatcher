@@ -63,6 +63,8 @@ class Settings:
         self.theme: str = "dark"          # light | dark | system
         self.language: str = "zh"         # zh | en
         self.sidebar_width: int = 320
+        self.show_ucs_tree: bool = False  # B3：UCS 分类树是否在侧栏显示（默认折叠）
+        self.last_side_tab: int = 1       # B3：上次侧栏页签（0=UCS 1=History 2=Favorites，默认历史）
         self.paths: dict[str, str | None] = {k: None for k in PATH_KEYS}
         self._load()
 
@@ -90,6 +92,14 @@ class Settings:
         except (TypeError, ValueError):
             pass
 
+        if "showUcsTree" in ui:
+            self.show_ucs_tree = bool(ui.get("showUcsTree"))
+        try:
+            t = int(ui.get("lastSideTab", self.last_side_tab))
+            self.last_side_tab = max(0, min(2, t))
+        except (TypeError, ValueError):
+            pass
+
         raw_paths = data.get("paths") or {}
         for k in PATH_KEYS:
             v = raw_paths.get(k)
@@ -108,6 +118,8 @@ class Settings:
                         "theme": self.theme,
                         "language": self.language,
                         "sidebarWidth": self.sidebar_width,
+                        "showUcsTree": self.show_ucs_tree,
+                        "lastSideTab": self.last_side_tab,
                     },
                     "paths": self.paths,
                 },

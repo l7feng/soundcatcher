@@ -34,6 +34,7 @@ ApplicationWindow {
     readonly property color cRowHover: Theme.rowHover
     readonly property color cRowSel: Theme.rowSel
     readonly property color cOnColor: Theme.onColor
+    readonly property color cMenuBg: Theme.menuBg
 
     // ---------- 状态 ----------
     property int libTotal: 0
@@ -47,6 +48,10 @@ ApplicationWindow {
     property var favPaths: []          // 已收藏的路径列表（收藏按钮状态用）
     property var savedList: []         // 已保存搜索（持久）
     property var catalogList: []       // UCS 扁平 753 类（改标弹窗用）
+    // B3：UCS 树是否在侧栏显示（默认折叠；持久化到 settings.json）
+    property bool showUcsTree: false
+    // B2：拖入文件夹时待确认的目录路径（确认弹窗用）
+    property string pendingScanDir: ""
     // 任一文本输入框聚焦时，禁用会吞字符的全局快捷键（空格等）
     property bool anyInputFocus: searchField.activeFocus || scanDirField.activeFocus || catSearchField.activeFocus
 
@@ -98,6 +103,22 @@ ApplicationWindow {
         if (p.indexOf("/") === 0) p = p.slice(1)
         return decodeURIComponent(p)
     }
+    // -------- 拖放分派：文件夹 → 扫描建库；文件 → 以声搜声 --------
+    function handleDrop(drop) {
+        if (!drop.hasUrls || drop.urls.length === 0) {
+            showStatus(I18n.t("drop.badType"))
+            return
+        }
+        var p = urlToPath(drop.urls[0])
+        if (backend.isDir(p)) {
+            pendingScanDir = p
+            dragHint.visible = false
+            scanConfirmDialog.open()
+            return
+        }
+        similarFromDrop(drop)
+    }
+
     // -------- 拖入参考音频 → 以声搜声 --------
     function similarFromDrop(drop) {
         if (!drop.hasUrls || drop.urls.length === 0) {
@@ -159,23 +180,48 @@ ApplicationWindow {
     // QML 函数带参数时，从 Python 的 invokeMethod 调用不可靠（元对象里没有匹配的
     // slot 签名）。所以这里提供**无参**中转函数：探针只调它，参数由探针先写进
     // `probeArgs`。生产代码不受影响（不调用即无副作用）。
+    //
+    // 三段式（踩过的坑）：主题/语言收敛要一帧，切页签后布局也要再一帧 —— 全部
+    // 挤在同一个同步块里读，只会读到旧几何（树高恒为 0）。故按
+    // `probeApply（切主题语言）→ probeToggle（展开树+切页签）→ probeSample（采样）`
+    // 拆成三步，由探针侧逐段泵事件循环推进。
     property var probeArgs: []
+    property bool _probeTreeSaved: false
+    property int _probeTabSaved: 1
+
     function probeApply() {
         var mode = probeArgs.length > 0 ? probeArgs[0] : "dark"
         var lang = probeArgs.length > 1 ? probeArgs[1] : "zh"
         applyTheme(mode)
         applyLanguage(lang)
-        // 读回真实生效值，供探针断言（比猜内部状态可靠）
-        probeResult = ({
-            themeMode: Theme.mode,
-            isDark: Theme.isDark,
-            lang: I18n.lang,
-            title: title,
-            bg: String(Theme.bg),
-            onColor: String(Theme.onColor),
-            sidebarWidth: sidebar.width,
-            treeHeight: ucsTreeView.height
-        })
+        _probeTreeSaved = showUcsTree
+        _probeTabSaved = sideTabs.currentIndex
+    }
+
+    function probeToggle() {
+        applyShowUcsTree(true)
+        sideTabs.currentIndex = 0
+    }
+
+    function probeSample() {
+        var r = { stage: "start" }
+        try {
+            if (ucsTreeView) r.treeHeight = ucsTreeView.height
+            if (sidebar) r.sidebarWidth = sidebar.width
+            r.stage = "geom-ok"
+            applyShowUcsTree(_probeTreeSaved)
+            sideTabs.currentIndex = _probeTabSaved
+            r.themeMode = Theme.mode
+            r.isDark = Theme.isDark
+            r.lang = I18n.lang
+            r.title = title
+            r.bg = String(Theme.bg)
+            r.onColor = String(Theme.onColor)
+            r.stage = "restored"
+        } catch (e) {
+            r.err = String(e)
+        }
+        probeResult = r
     }
     property var probeResult: ({})
 
@@ -188,9 +234,10 @@ ApplicationWindow {
         probeHitCount = catModel.count
     }
 
+    // B4 三模式归一：界面不再暴露 semantic/keyword/hybrid 选择，统一走 hybrid
+    // （后端 Searcher 仍支持三模式，槽签名保留 —— 历史/保存搜索与外部测试脚本
+    // 直接调 backend.doSearch(text, mode, n) 依然可用，不会因 UI 收敛而失效）。
     function currentMode() {
-        if (modeSemantic.checked) return "semantic"
-        if (modeKeyword.checked) return "keyword"
         return "hybrid"
     }
 
@@ -273,6 +320,9 @@ ApplicationWindow {
             savedList = backend.savedSearches
             syncSaved()
         }
+        function onSourcesChanged() {
+            syncSources()
+        }
     }
 
     // 收藏状态同步到前端（结果行星标 + Favorites 页列表）
@@ -285,6 +335,17 @@ ApplicationWindow {
             favPaths.push(f.path)
             favoritesModel.append({ path: f.path, filename: f.filename || (f.path.split("/").pop().split("\\").pop()) })
         }
+    }
+
+    // B5：来源文件夹同步到管理弹窗列表
+    function syncSources() {
+        sourcesModel.clear()
+        var ss = backend.sources
+        for (var i = 0; i < ss.length; i++) sourcesModel.append({ path: ss[i].path })
+    }
+
+    function scanAllSources() {
+        showStatus(backend.scanAllSources())
     }
 
     // 保存搜索同步到 History 页的 Saved 区块
@@ -389,6 +450,14 @@ ApplicationWindow {
         Menu {
             title: I18n.t("menu.file")
             delegate: root.menuItemDelegate
+            background: Rectangle {
+                implicitWidth: 200
+                implicitHeight: 34
+                color: root.menuBgColor
+                border.color: root.menuBgLine
+                border.width: 1
+                radius: root.menuBgRadius
+            }
             MenuItem {
                 text: I18n.t("menu.openDataDir")
                 onTriggered: showStatus(backend.openDataFolder())
@@ -410,13 +479,100 @@ ApplicationWindow {
             }
         }
 
+        // ---------- 查看 ----------
+        // 承载「界面可见性」类开关：B3 的 UCS 树可选（默认折叠）+ 侧栏宽度重置 + 快捷键表。
+        Menu {
+            title: I18n.t("menu.view")
+            delegate: root.menuItemDelegate
+            background: Rectangle {
+                implicitWidth: 200
+                implicitHeight: 34
+                color: root.menuBgColor
+                border.color: root.menuBgLine
+                border.width: 1
+                radius: root.menuBgRadius
+            }
+
+            MenuItem {
+                text: I18n.t("menu.showUcsTree")
+                checkable: true
+                checked: root.showUcsTree
+                onTriggered: root.toggleUcsTree()
+            }
+            MenuSeparator {}
+            MenuItem {
+                text: I18n.t("menu.expandAll")
+                enabled: root.showUcsTree
+                onTriggered: root.expandAllUcs()
+            }
+            MenuItem {
+                text: I18n.t("menu.collapseAll")
+                enabled: root.showUcsTree
+                onTriggered: root.collapseAllUcs()
+            }
+            MenuSeparator {}
+            MenuItem {
+                text: I18n.t("menu.resetLayout")
+                onTriggered: root.resetSidebarWidth()
+            }
+            MenuItem {
+                text: I18n.t("menu.shortcuts")
+                onTriggered: shortcutsDialog.open()
+            }
+        }
+
+        // ---------- 音效库 ----------
+        // 素材来源侧的操作：数据目录 + B5 来源文件夹管理。
+        Menu {
+            title: I18n.t("menu.library")
+            delegate: root.menuItemDelegate
+            background: Rectangle {
+                implicitWidth: 200
+                implicitHeight: 34
+                color: root.menuBgColor
+                border.color: root.menuBgLine
+                border.width: 1
+                radius: root.menuBgRadius
+            }
+
+            MenuItem {
+                text: I18n.t("menu.sources")
+                onTriggered: sourcesDialog.open()
+            }
+            MenuSeparator {}
+            MenuItem {
+                text: I18n.t("menu.openDataDir")
+                onTriggered: showStatus(backend.openDataFolder())
+            }
+            MenuItem {
+                text: I18n.t("menu.openExportDir")
+                onTriggered: showStatus(backend.openExportFolder())
+            }
+        }
+
         Menu {
             title: I18n.t("menu.settings")
             delegate: root.menuItemDelegate
+            background: Rectangle {
+                implicitWidth: 200
+                implicitHeight: 34
+                color: root.menuBgColor
+                border.color: root.menuBgLine
+                border.width: 1
+                radius: root.menuBgRadius
+            }
 
             Menu {
                 title: I18n.t("menu.theme")
                 delegate: root.menuItemDelegate
+                background: Rectangle {
+                implicitWidth: 200
+                implicitHeight: 34
+                color: root.menuBgColor
+                border.color: root.menuBgLine
+                border.width: 1
+                radius: root.menuBgRadius
+            }
                 // 三态互斥；当前态打勾。不用 ActionGroup 是为了少一层间接
                 MenuItem {
                     text: I18n.t("menu.theme.light")
@@ -441,6 +597,14 @@ ApplicationWindow {
             Menu {
                 title: I18n.t("menu.language")
                 delegate: root.menuItemDelegate
+                background: Rectangle {
+                implicitWidth: 200
+                implicitHeight: 34
+                color: root.menuBgColor
+                border.color: root.menuBgLine
+                border.width: 1
+                radius: root.menuBgRadius
+            }
                 MenuItem {
                     text: "中文"
                     checkable: true
@@ -479,6 +643,14 @@ ApplicationWindow {
         Menu {
             title: I18n.t("menu.help")
             delegate: root.menuItemDelegate
+            background: Rectangle {
+                implicitWidth: 200
+                implicitHeight: 34
+                color: root.menuBgColor
+                border.color: root.menuBgLine
+                border.width: 1
+                radius: root.menuBgRadius
+            }
             MenuItem {
                 text: I18n.t("menu.shortcuts")
                 onTriggered: shortcutsDialog.open()
@@ -518,6 +690,39 @@ ApplicationWindow {
             x: 2
             y: (parent.height - height) / 2
         }
+    }
+
+    // 菜单弹层统一样式背景（见各 Menu 的 `background:`）。
+    // ⚠️ 不能抽成共享 `Component` 再挂到 `Menu.background`（该属性要的是 Item，
+    // 给 Component 会报 `Unable to assign QQmlComponent to QQuickItem`）→ 每处内联。
+    property int menuBgRadius: 6
+    property color menuBgLine: cLine
+    property color menuBgColor: cMenuBg
+
+    // 抑制启动阶段的页签写回（Component.onCompleted 恢复 lastSideTab 时会触发
+    // onCurrentIndexChanged，未加闸会把恢复值又写回去，还可能覆盖成默认值）
+    property bool _ready: false
+
+    // ---------- B3：UCS 树可见性（查看菜单开关 + 持久化）----------
+    function applyShowUcsTree(on_) {
+        showUcsTree = on_
+        backend.setShowUcsTree(on_)
+        if (!on_ && sideTabs.currentIndex === 0) {
+            // 隐藏 UCS 页签时若正停在它上面 → 回落到 History（index 1）
+            sideTabs.currentIndex = 1
+        }
+    }
+
+    function toggleUcsTree() {
+        applyShowUcsTree(!showUcsTree)
+    }
+
+    // ---------- B2：拖入文件夹 → 确认后扫描 ----------
+    function confirmScanFolder() {
+        var d = pendingScanDir
+        scanConfirmDialog.close()
+        if (!d) return
+        showStatus(backend.startScan(d))
     }
 
     // ---------- 主题 / 语言切换（热生效 + 持久化）----------
@@ -570,79 +775,8 @@ ApplicationWindow {
                     }
                 }
 
-                // 模式切换（checkable 三选一：Semantic / Keyword / Hybrid）
-                // 自定义 background + contentItem 以适配暗色主题（默认样式的文字为深色，在深底上不可见）
-                ButtonGroup { id: modeGroup }
-                Button {
-                    id: modeSemantic
-                    text: I18n.t("mode.semantic")
-                    checkable: true
-                    checked: true
-                    ButtonGroup.group: modeGroup
-                    property string mode: "semantic"
-                    implicitHeight: 30
-                    background: Rectangle {
-                        radius: 6
-                        color: modeSemantic.checked ? cAccent
-                             : (modeSemantic.hovered ? cPanel2 : cPanel)
-                        border.color: modeSemantic.checked ? cAccent : cLine
-                        border.width: 1
-                    }
-                    contentItem: Label {
-                        text: modeSemantic.text
-                        color: modeSemantic.checked ? cOnColor : cText
-                        font.pixelSize: 11
-                        font.bold: modeSemantic.checked
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                }
-                Button {
-                    id: modeKeyword
-                    text: I18n.t("mode.keyword")
-                    checkable: true
-                    ButtonGroup.group: modeGroup
-                    property string mode: "keyword"
-                    implicitHeight: 30
-                    background: Rectangle {
-                        radius: 6
-                        color: modeKeyword.checked ? cAccent
-                             : (modeKeyword.hovered ? cPanel2 : cPanel)
-                        border.color: modeKeyword.checked ? cAccent : cLine
-                        border.width: 1
-                    }
-                    contentItem: Label {
-                        text: modeKeyword.text
-                        color: modeKeyword.checked ? cOnColor : cText
-                        font.pixelSize: 11
-                        font.bold: modeKeyword.checked
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                }
-                Button {
-                    id: modeHybrid
-                    text: I18n.t("mode.hybrid")
-                    checkable: true
-                    ButtonGroup.group: modeGroup
-                    property string mode: "hybrid"
-                    implicitHeight: 30
-                    background: Rectangle {
-                        radius: 6
-                        color: modeHybrid.checked ? cAccent
-                             : (modeHybrid.hovered ? cPanel2 : cPanel)
-                        border.color: modeHybrid.checked ? cAccent : cLine
-                        border.width: 1
-                    }
-                    contentItem: Label {
-                        text: modeHybrid.text
-                        color: modeHybrid.checked ? cOnColor : cText
-                        font.pixelSize: 11
-                        font.bold: modeHybrid.checked
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                }
+                // （B4 三模式归一）检索区不再放 Semantic / Keyword / Hybrid 三选一按钮：
+                // 统一走 hybrid（见 currentMode()）。后端槽签名保留，历史/保存搜索回放不受影响。
 
                 // 搜索框
                 TextField {
@@ -870,16 +1004,23 @@ ApplicationWindow {
                         background: Rectangle {
                             color: "transparent"
                         }
+                        // B3：页签记忆 —— 启动取 backend.lastSideTab，切换即写回。
+                        // UCS 页签被隐藏时若当前停在它上面（index 0），回落到 History。
+                        onCurrentIndexChanged: {
+                            if (root._ready) backend.setLastSideTab(currentIndex)
+                        }
                         // 按文案长度按比例分配宽度（等分会把最长的 Favorites 截断）。
                         // 比例 = 各自文案长度 + 最小内边距，保证三条都完整显示。
+                        // B3：UCS 页签可选（root.showUcsTree），隐藏时宽度按剩余两项重算。
                         readonly property real _wUcs: 8
                         readonly property real _wHis: 12
                         readonly property real _wFav: 14
-                        readonly property real _wSum: _wUcs + _wHis + _wFav
+                        readonly property real _wSum: (root.showUcsTree ? _wUcs : 0) + _wHis + _wFav
                         readonly property real _avail: parent.width - spacing * 2
                         TabButton {
                             id: tabUcs
                             text: I18n.t("side.ucs")
+                            visible: root.showUcsTree
                             width: sideTabs._avail * sideTabs._wUcs / sideTabs._wSum
                             background: Rectangle {
                                 radius: 6
@@ -2607,13 +2748,158 @@ ApplicationWindow {
         }
     }
 
+    // ---------- B5：来源文件夹管理 ----------
+    // 登记素材所在目录（sources 表），支持添加 / 移除 / 逐个或全部扫描。
+    // 只登记路径，不改动源文件；扫描复用后台子进程（与扫描面板同一条链路）。
+    FolderDialog {
+        id: srcFolderDialog
+        title: I18n.t("src.addTitle")
+        onAccepted: showStatus(backend.addSource(root.urlToPath(srcFolderDialog.selectedFolder)))
+    }
+
+    Dialog {
+        id: sourcesDialog
+        objectName: "sourcesDialog"
+        modal: true
+        anchors.centerIn: parent
+        width: 560
+        padding: 0
+
+        background: Rectangle {
+            radius: 12
+            color: cPanel
+            border.color: cLine
+            border.width: 1
+        }
+
+        header: ColumnLayout {
+            spacing: 4
+            Label {
+                text: I18n.t("src.title")
+                color: cText
+                font.pixelSize: 15
+                font.bold: true
+                leftPadding: 18
+                topPadding: 14
+            }
+            Label {
+                Layout.fillWidth: true
+                Layout.leftMargin: 18
+                Layout.rightMargin: 18
+                text: I18n.t("src.desc")
+                color: cTextDim
+                font.pixelSize: 10
+                wrapMode: Text.WordWrap
+            }
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 8
+            anchors.margins: 18
+
+            // 来源列表
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 220
+                radius: 8
+                color: cPanel2
+                border.color: cLine
+                ListView {
+                    id: srcList
+                    anchors.fill: parent
+                    anchors.margins: 6
+                    clip: true
+                    model: ListModel { id: sourcesModel }
+                    delegate: RowLayout {
+                        width: srcList.width
+                        spacing: 6
+                        Label {
+                            Layout.fillWidth: true
+                            text: model.path
+                            color: cText
+                            font.pixelSize: 11
+                            elide: Text.ElideMiddle
+                            ToolTip.visible: srcRowMa.containsMouse
+                            ToolTip.text: model.path
+                        }
+                        Button {
+                            text: I18n.t("src.scan")
+                            implicitHeight: 22
+                            implicitWidth: 52
+                            onClicked: showStatus(backend.startScan(model.path))
+                            background: Rectangle { radius: 5; color: parent.hovered ? cAccentDark : cPanel; border.color: cLine }
+                            contentItem: Label { text: parent.text; color: cText; font.pixelSize: 10 }
+                        }
+                        Button {
+                            text: I18n.t("src.remove")
+                            implicitHeight: 22
+                            implicitWidth: 52
+                            onClicked: showStatus(backend.removeSource(model.path))
+                            background: Rectangle { radius: 5; color: parent.hovered ? cRed : Theme.dangerBg; border.color: cLine }
+                            contentItem: Label { text: parent.text; color: parent.hovered ? cOnColor : cText; font.pixelSize: 10 }
+                        }
+                    }
+                    MouseArea { id: srcRowMa; anchors.fill: parent; acceptedButtons: Qt.NoButton; hoverEnabled: true; z: -1 }
+                }
+                Label {
+                    anchors.centerIn: parent
+                    visible: sourcesModel.count === 0
+                    text: I18n.t("src.empty")
+                    color: cTextDim
+                    font.pixelSize: 11
+                }
+            }
+        }
+
+        footer: RowLayout {
+            spacing: 8
+            anchors.margins: 18
+            Button {
+                text: I18n.t("src.add")
+                implicitHeight: 28
+                implicitWidth: 96
+                onClicked: srcFolderDialog.open()
+                background: Rectangle { radius: 6; color: parent.hovered ? cAccentDark : Theme.applyBg; border.color: cAccent }
+                contentItem: Label { text: parent.text; color: cText; font.pixelSize: 11 }
+            }
+            Item { Layout.fillWidth: true }
+            Button {
+                text: I18n.t("src.scanAll")
+                enabled: sourcesModel.count > 0
+                implicitHeight: 28
+                implicitWidth: 84
+                onClicked: root.scanAllSources()
+                background: Rectangle { radius: 6; color: parent.hovered ? cAccentDark : Theme.applyBg; border.color: cAccent }
+                contentItem: Label { text: parent.text; color: cText; font.pixelSize: 11 }
+            }
+            Button {
+                text: I18n.t("btn.close")
+                implicitHeight: 28
+                implicitWidth: 72
+                onClicked: sourcesDialog.close()
+                background: Rectangle { radius: 6; color: parent.hovered ? cPanel2 : cPanel; border.color: cLine }
+                contentItem: Label { text: parent.text; color: cText; font.pixelSize: 11 }
+            }
+        }
+
+        onOpened: root.syncSources()
+    }
+
     // ---------- 拖入参考音频 → 以声搜声（全窗口） ----------
+    // B2：拖入的既可能是「参考音频」（→ 以声搜声），也可能是「文件夹」（→ 扫描建库）。
+    // 这里做一次分派：文件夹走确认弹窗再扫描；文件维持原有以声搜声链路。
     DropArea {
         id: dropZone
         anchors.fill: parent
-        onDropped: function(drop) { root.similarFromDrop(drop) }
+        onDropped: function(drop) { root.handleDrop(drop) }
         onEntered: {
-            if (drag.hasUrls && drag.urls.length > 0) dragHint.visible = true
+            if (drag.hasUrls && drag.urls.length > 0) {
+                var p = drag.urls.length > 0 ? root.urlToPath(drag.urls[0]) : ""
+                dragHint.hintText = backend.isDir(p)
+                    ? I18n.t("drop.folderHint")
+                    : I18n.t("drop.hint")
+                dragHint.visible = true
+            }
         }
         onExited: dragHint.visible = false
     }
@@ -2626,12 +2912,50 @@ ApplicationWindow {
         z: 9000
         border.color: cAccent
         border.width: 3
+        property string hintText: ""
         Text {
             anchors.centerIn: parent
-            text: I18n.t("drop.hint")
+            text: parent.hintText
             horizontalAlignment: Text.AlignHCenter
             color: cText
             font.pixelSize: 22
+        }
+    }
+
+    // ---------- B2：拖文件夹 → 扫描确认 ----------
+    Dialog {
+        id: scanConfirmDialog
+        title: I18n.t("scan.confirmTitle")
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(520, parent.width - 80)
+        padding: 16
+        background: Rectangle { color: cPanel2; border.color: cLine; radius: 10 }
+        contentItem: ColumnLayout {
+            spacing: 12
+            Label {
+                Layout.fillWidth: true
+                text: I18n.t("scan.confirmBody", root.pendingScanDir)
+                color: cText
+                font.pixelSize: 12
+                wrapMode: Text.WordWrap
+            }
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                spacing: 8
+                Button {
+                    text: I18n.t("btn.cancel")
+                    onClicked: scanConfirmDialog.close()
+                    background: Rectangle { radius: 7; color: parent.hovered ? cPanel : cPanel2; border.color: cLine }
+                    contentItem: Label { text: parent.text; color: cText; font.pixelSize: 11 }
+                }
+                Button {
+                    text: I18n.t("scan.confirmOk")
+                    onClicked: root.confirmScanFolder()
+                    background: Rectangle { radius: 7; color: parent.hovered ? cAccentDark : cAccent }
+                    contentItem: Label { text: parent.text; color: cOnColor; font.pixelSize: 11; font.bold: true }
+                }
+            }
         }
     }
 
@@ -2647,6 +2971,12 @@ ApplicationWindow {
     Component.onCompleted: {
         backend.refreshStats()
         catalogList = backend.ucsCatalogList
+        // B3：恢复 UCS 树可见性与上次页签（默认折叠 + 默认 History）
+        showUcsTree = backend.getShowUcsTree()
+        var tab = backend.getLastSideTab()
+        if (!showUcsTree && tab === 0) tab = 1
+        sideTabs.currentIndex = tab
+        root._ready = true
         searchField.forceActiveFocus()
         // 收藏 / 保存搜索为持久数据：backend 构造时已从 %APPDATA% 载入，此处同步到前端
         syncFavorites()

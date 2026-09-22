@@ -655,6 +655,7 @@ class AppBackend(QObject):
     browseFinished = Signal(list)
     favoritesChanged = Signal()
     savedSearchesChanged = Signal()
+    sourcesChanged = Signal()
     scanStateChanged = Signal()
     settingsChanged = Signal()          # 主题 / 语言 / 侧栏宽度 / 路径偏好变化
     restartRequired = Signal(str)       # 路径迁移完成，需重启（携带提示文案）
@@ -793,6 +794,31 @@ class AppBackend(QObject):
 
     sidebarWidth = Property(int, getSidebarWidth, setSidebarWidth, notify=settingsChanged)
 
+    # -- B3：UCS 树可见性 + 侧栏页签记忆 ------------------------------------
+
+    @Slot(result=bool)
+    def getShowUcsTree(self) -> bool:
+        return self._settings.show_ucs_tree
+
+    @Slot(bool)
+    def setShowUcsTree(self, on: bool) -> None:
+        on = bool(on)
+        if on != self._settings.show_ucs_tree:
+            self._settings.show_ucs_tree = on
+            self._settings.save()
+            self.settingsChanged.emit()
+
+    @Slot(result=int)
+    def getLastSideTab(self) -> int:
+        return self._settings.last_side_tab
+
+    @Slot(int)
+    def setLastSideTab(self, idx: int) -> None:
+        idx = max(0, min(2, int(idx)))
+        if idx != self._settings.last_side_tab:
+            self._settings.last_side_tab = idx
+            self._settings.save()
+
     @Slot(result="QVariant")
     def pathInfo(self) -> list[dict]:
         """5 条可改路径的当前生效值 + 是否被环境变量/设置覆盖（设置面板用）。"""
@@ -907,6 +933,19 @@ class AppBackend(QObject):
         return {"ok": res.ok, "msg": res.summary() if not res.ok else
                 f"将移动 {res.moved} 个条目：{old_eff} → {np}",
                 "count": res.moved, "old": old_eff, "new": np}
+
+    @Slot(str, result=bool)
+    def isDir(self, path: str) -> bool:
+        """拖放分派用：判断拖入的 url 指向目录还是文件（B2）。
+
+        路径可能来自 QML 的 url 转换，可能带尾部分隔符或为空 → 统一容错为 False。
+        """
+        if not path:
+            return False
+        try:
+            return Path(path).is_dir()
+        except OSError:
+            return False
 
     @Slot(str, result=str)
     def openFolder(self, path: str) -> str:
@@ -1260,6 +1299,102 @@ class AppBackend(QObject):
         except Exception as exc:  # noqa: BLE001
             logger.exception("收藏导入失败")
             return f"导入失败：{exc}"
+
+    # -- B5：来源文件夹管理（sources 表）-----------------------------------
+
+    def getSources(self) -> list[dict]:
+        """登记的来源文件夹列表（path/addedAt/lastScan）。读失败返回空表，不崩界面。"""
+        if not self._db_path.exists():
+            return []
+        try:
+            conn = _connect_readonly(self._db_path)
+        except Exception:  # noqa: BLE001
+            return []
+        try:
+            rows = conn.execute(
+                "SELECT path, added_at, last_scan FROM sources ORDER BY added_at ASC"
+            ).fetchall()
+            return [
+                {"path": r["path"], "addedAt": r["added_at"] or "", "lastScan": r["last_scan"] or ""}
+                for r in rows
+            ]
+        except sqlite3.OperationalError:
+            # 旧库尚未迁移出 sources 表 → 视作空表（不报错）
+            return []
+        finally:
+            conn.close()
+
+    sources = Property("QVariant", getSources, notify=sourcesChanged)
+
+    @Slot(str, result=str)
+    def addSource(self, path: str) -> str:
+        """登记一个来源文件夹（去重）；返回给状态栏的提示。"""
+        raw = (path or "").strip()
+        if not raw:
+            return "请选择要登记的文件夹"
+        p = Path(raw)
+        if not p.is_dir():
+            return f"目录不存在或不可读：{raw}"
+        norm = str(p.resolve())
+        try:
+            conn = _connect_writer(self._db_path)
+            try:
+                exists = conn.execute(
+                    "SELECT 1 FROM sources WHERE path=?", (norm,)
+                ).fetchone()
+                if exists:
+                    return f"该文件夹已在登记表中：{norm}"
+                conn.execute(
+                    "INSERT INTO sources(path, added_at, last_scan) VALUES(?, ?, '')",
+                    (norm, time.strftime("%Y-%m-%d %H:%M")),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            self.sourcesChanged.emit()
+            return f"已登记来源：{norm}"
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("登记来源失败")
+            return f"登记失败：{exc}"
+
+    @Slot(str, result=str)
+    def removeSource(self, path: str) -> str:
+        """从登记表移除（**不删任何文件**）；返回给状态栏的提示。"""
+        raw = (path or "").strip()
+        if not raw:
+            return "未指定来源"
+        try:
+            conn = _connect_writer(self._db_path)
+            try:
+                conn.execute("DELETE FROM sources WHERE path=?", (raw,))
+                conn.commit()
+            finally:
+                conn.close()
+            self.sourcesChanged.emit()
+            return f"已移除来源：{raw}"
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("移除来源失败")
+            return f"移除失败：{exc}"
+
+    @Slot(result=str)
+    def scanAllSources(self) -> str:
+        """依次对每个登记来源启动扫描（同一条后台子进程链路；运行中拒绝重复启动）。"""
+        srcs = self.getSources()
+        if not srcs:
+            return "尚未登记来源文件夹"
+        started = 0
+        last = ""
+        for s in srcs:
+            msg = self.startScan(s["path"])
+            last = msg
+            # startScan 成功时返回 "扫描中：…"；被拒绝时返回其他文案 → 只在成功时计数
+            if msg.startswith("扫描中"):
+                started += 1
+            else:
+                break
+        if started <= 1:
+            return last
+        return f"已开始扫描 {started} 个来源文件夹"
 
     # -- 保存搜索（Saved Searches）------------------------------------------
 

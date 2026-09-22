@@ -26,9 +26,10 @@ CJK = re.compile(r"[\u4e00-\u9fff]")
 
 # 白名单：语言名必须永远用该语言自己的写法（切到英文界面时「中文」这一项
 # 仍应显示“中文”，否则用户找不到切回去的入口），所以这里豁免。
-ALLOW = {
-    (445, "text"),   # 语言菜单：中文
-}
+#
+# ⚠️ 按**值**豁免，不要按行号 —— 行号会随任何一次编辑漂移，导致测试假红
+# （2026-09-21 踩中：B1 菜单新增把该行从 445 推到 584，测试即报 1 处硬编码）。
+ALLOW_VALUES = {"中文", "English"}
 
 lines = []
 fails = []
@@ -58,13 +59,13 @@ def main() -> int:
             if not m:
                 continue
             val = m.group(2)
-            if CJK.search(val) and (i, attr) not in ALLOW:
+            if CJK.search(val) and val not in ALLOW_VALUES:
                 hits.append((i, f"{attr}: \"{val}\""))
             break
 
     out("=== main.qml 硬编码中文文案（应全部走 I18n.t） ===")
     if not hits:
-        out("  未发现 —— 界面文案已全部进入 i18n（白名单 %d 项已豁免）" % len(ALLOW))
+        out("  未发现 —— 界面文案已全部进入 i18n（白名单 %d 项已豁免）" % len(ALLOW_VALUES))
     for i, s in hits:
         out("  L%-5d %s" % (i, s))
 

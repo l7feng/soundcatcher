@@ -20,7 +20,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-SCHEMA_VERSION = 2  # v2：files_fts 由 contentless 改为常规表（contentless 不支持 DELETE，无法更新行）
+SCHEMA_VERSION = 3  # v2：files_fts 由 contentless 改常规表；v3：新增 sources 来源登记表
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
@@ -68,6 +68,14 @@ CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
+
+-- B5：来源文件夹登记表。只登记路径（不复制、不改动源文件），
+-- 供「音效库 → 来源文件夹」管理界面与批量扫描使用。
+CREATE TABLE IF NOT EXISTS sources (
+    path      TEXT PRIMARY KEY,   -- 绝对路径（唯一，天然去重）
+    added_at  TEXT,               -- 登记时间（本地时间字符串）
+    last_scan TEXT                -- 上次扫描时间（空 = 从未扫描）
+);
 """
 
 
@@ -112,6 +120,15 @@ def _migrate(conn: sqlite3.Connection, from_v: int, to_v: int) -> None:
                    (SELECT group_concat(t.tag, ' ') FROM tags t
                      WHERE t.file_id = f.id), '')
                FROM files f"""
+        )
+    if from_v < 3:
+        # v2 → v3：新增 sources 来源登记表（建表在 SCHEMA 里已幂等，这里兜底旧库）。
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS sources (
+                   path      TEXT PRIMARY KEY,
+                   added_at  TEXT,
+                   last_scan TEXT
+               )"""
         )
 
 
