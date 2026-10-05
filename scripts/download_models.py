@@ -7,7 +7,7 @@
 
 **落点由 ``soundcatcher.Config.models_dir`` 决定**（不再硬编码），优先级：
 ``SOUNDCATCHER_MODELS`` > 工程层 ``<工程>/models`` > 仓内 ``<仓>/models``。
-现行布局下即仓内 ``<仓根>\\models``（如 ``D:\\Ai-Files\\GitHub-warehouse\\SoundCatcher\\models``）。
+现行布局下即仓内 ``<仓根>\\models``（如 ``D:\\Ai-Files\\Repos\GitHub\\SoundCatcher\\models``）。
 
 默认走 ``hf-mirror.com`` 镜像，可用 ``--endpoint`` 覆盖。
 
