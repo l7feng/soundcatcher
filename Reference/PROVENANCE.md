@@ -42,6 +42,7 @@
 - 三个参考目录**不入版本控制**（见仓根 `.gitignore` 的 `Reference/`）。
 - `ucs-tools` 保留 `.git`，可直接 `git -C Reference/ucs-tools pull` 升级，升级后把新 HEAD 记到本表。
 - `deep-cuts` 与 `semantic-audio-search` 是无 `.git` 快照，升级＝重新下载覆盖，同样回来更新本表。
+- **自动化同步任务（每天 00:00 的「Repos 仓库每日同步检查」）必须整体跳过 `Reference/` 下三个参考目录**：只读、永不 commit、永不 push。`ucs-tools` 的 remote 指向第三方 `jmrsound/ucs-tools`，本机无推送权限，任何自动写入都属越界；其余两份是无 `.git` 快照，同样不属本仓待提交内容。（2026-11-09 补）
 
 ---
 
